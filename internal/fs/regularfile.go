@@ -9,6 +9,7 @@ import (
 
 type RegularFile struct {
 	FileStats
+	Path   string `json:"path"`
 	BlobID string `json:"blob_id"`
 }
 
@@ -22,7 +23,11 @@ func FromJsonRF(o map[string]interface{}) *RegularFile {
 	if !ok {
 		return nil
 	}
-	rf := &RegularFile{BlobID: blobID}
+	path, ok := o["path"].(string)
+	if !ok {
+		return nil
+	}
+	rf := &RegularFile{Path: path, BlobID: blobID}
 	rf.FileStats.FromJson(o)
 	return rf
 }
@@ -57,7 +62,7 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 				ID:   fmt.Sprintf("%016x", h.Sum64()),
 				Size: uint32(n),
 			}
-			if err := sb.blockWrite(block, buf[0:n]); err != nil {
+			if err := sb.dataWrite(sb.blocksDir, block.ID, buf[0:n]); err != nil {
 				return nil, err
 			}
 			blob.Blocks = append(blob.Blocks, block)
@@ -71,14 +76,14 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	} else {
 		sb.Blobs[blob.ID] = blob
 	}
-	return blob, nil
+	return blob, sb.jsonWrite(sb.blobsDir, blob.ID, blob)
 }
 
-func (rf *RegularFile) Hash(path string) string {
+func (rf *RegularFile) Hash() string {
 	h := crc64.New(crc64.MakeTable(crc64.ECMA))
 
 	h.Write([]byte("regularfile"))
-	h.Write([]byte(path))
+	h.Write([]byte(rf.Path))
 	rf.FileStats.hash(h)
 
 	// Note: BlobID is not part of the hash because that would
@@ -89,34 +94,36 @@ func (rf *RegularFile) Hash(path string) string {
 }
 
 func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string) (int, error) {
-	rf := &RegularFile{FileStats: newFileStats(info)}
-	h := rf.Hash(relativePath)
-	entries, ok := sb.Entries[relativePath]
+	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}
+	ID := rf.Hash()
+	versions, ok := sb.Entries[relativePath]
 	if !ok {
-		// File does not exist in the map yet.
+		// File does not exist in the metadata at all.
 		if blob, err := rf.blobify(sb, fullPath); err != nil {
 			return 0, err
 		} else {
 			rf.BlobID = blob.ID
 		}
 		sb.Entries[relativePath] = make(map[string]interface{})
-		sb.Entries[relativePath][h] = rf
-		return 1, nil
+		sb.Entries[relativePath][ID] = rf
+		return 1, sb.jsonWrite(sb.entriesDir, ID, rf)
 	}
 
-	if _, ok := entries[h]; ok {
+	if _, ok := versions[ID]; ok {
 		// File exists, and _this_ version exists.
 		// We assume that if the mtime did not change, the content did not change either.
-		// TODO: Make this an option to override this behavior.
+		// TODO: Make this an option to override this behavior so that we
+		// can rewrite the entire archive.
 		return 0, nil
 	}
 
-	// Updated file exists.
+	// New version.
 	if blob, err := rf.blobify(sb, fullPath); err != nil {
 		return 0, err
 	} else {
 		rf.BlobID = blob.ID
 	}
-	entries[h] = rf
-	return 1, nil
+
+	versions[ID] = rf
+	return 1, sb.jsonWrite(sb.entriesDir, ID, rf)
 }

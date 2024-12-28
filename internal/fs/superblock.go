@@ -15,7 +15,7 @@ import (
 
 type Entry interface {
 	isEntry()
-	Hash(path string) string // 16 character hexadecimal
+	Hash() string // 16 character hexadecimal
 }
 
 type Superblock struct {
@@ -31,9 +31,14 @@ type Superblock struct {
 	sbFile       string
 	readFromDisk bool
 	blocksDir    string
+	entriesDir   string
+	blobsDir     string
+
+	bytesWritten int
 }
 
 func (sb *Superblock) Write() error {
+	fmt.Printf("Saving super block (%d)\n", sb.bytesWritten)
 	if sb.readFromDisk {
 		if err := os.Rename(sb.sbFile, fmt.Sprintf("%s.bak", sb.sbFile)); err != nil {
 			return err
@@ -52,7 +57,27 @@ func (sb *Superblock) Write() error {
 	if err := os.WriteFile(sb.sbFile, buf.Bytes(), 0644); err != nil {
 		return err
 	}
+	sb.bytesWritten = 0
 	return nil
+}
+
+func (sb *Superblock) MaybeWrite() error {
+	if sb.bytesWritten >= 1024 {
+		return sb.Write()
+	}
+	return nil
+}
+
+func mkdir(save *string, archiveDir, subDir string) (err error) {
+	*save = path.Join(archiveDir, subDir)
+	_, err = os.Stat(*save)
+	if err == nil {
+		return
+	}
+	if os.IsNotExist(err) {
+		return os.MkdirAll(*save, 0700)
+	}
+	return err
 }
 
 func ReadSuperblock(archiveDir string) (*Superblock, error) {
@@ -111,33 +136,35 @@ func ReadSuperblock(archiveDir string) (*Superblock, error) {
 	sb.archiveDir = archiveDir
 	sb.sbFile = sbFile
 
-	// Makes sure that the blocks directory exists.
-	sb.blocksDir = path.Join(archiveDir, "blocks")
-	_, err = os.Stat(sb.blocksDir)
-	if err == nil {
-		return sb, nil
+	// Makes sure that the metadata directories exists.
+	if err := mkdir(&sb.blocksDir, archiveDir, "blocks"); err != nil {
+		return nil, err
 	}
-	if os.IsNotExist(err) {
-		if err := os.Mkdir(sb.blocksDir, 0750); err != nil {
-			return nil, err
-		}
-		return sb, nil
+	if err := mkdir(&sb.entriesDir, archiveDir, "entries"); err != nil {
+		return nil, err
+	}
+	if err := mkdir(&sb.blobsDir, archiveDir, "blobs"); err != nil {
+		return nil, err
 	}
 
-	return nil, err
+	return sb, nil
 }
 
-func (sb *Superblock) blockWrite(block *Block, data []byte) error {
-	if block.Size != uint32(len(data)) {
-		panic(fmt.Sprintf("Data/Block size mismatch, %d != %d", block.Size, len(data)))
+func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
 	}
+	return sb.dataWrite(baseDir, hash, b)
+}
 
-	dirName := path.Join(sb.blocksDir, block.dirName())
-	if err := os.MkdirAll(dirName, 0750); err != nil {
+func (sb *Superblock) dataWrite(baseDir, hash string, data []byte) error {
+	dirName := path.Join(baseDir, dirName(hash))
+	if err := os.MkdirAll(dirName, 0700); err != nil {
 		return err
 	}
 
-	fileName := path.Join(dirName, block.ID[14:16])
+	fileName := path.Join(dirName, hash[14:16])
 	fout, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
@@ -152,5 +179,6 @@ func (sb *Superblock) blockWrite(block *Block, data []byte) error {
 	if n != len(data) {
 		return fmt.Errorf("unexpected number of bytes written: %d, expected %d", n, len(data))
 	}
+	sb.bytesWritten += len(data)
 	return nil
 }

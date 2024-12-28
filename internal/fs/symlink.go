@@ -9,6 +9,7 @@ import (
 type Symlink struct {
 	FileStats
 	Target string `json:"target"`
+	Path   string `json:"path"`
 }
 
 func FromJsonSL(o map[string]interface{}) *Symlink {
@@ -16,7 +17,11 @@ func FromJsonSL(o map[string]interface{}) *Symlink {
 	if !ok {
 		return nil
 	}
-	sl := &Symlink{Target: target}
+	path, ok := o["path"].(string)
+	if !ok {
+		return nil
+	}
+	sl := &Symlink{Path: path, Target: target}
 	sl.FileStats.FromJson(o)
 	return sl
 }
@@ -42,6 +47,7 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 	sl := &Symlink{
 		FileStats: newFileStats(info),
 		Target:    target,
+		Path:      relativePath,
 	}
 	h := sl.Hash(relativePath)
 	entries, ok := sb.Entries[relativePath]

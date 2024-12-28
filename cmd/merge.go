@@ -24,7 +24,7 @@ var mergeCmd = &cobra.Command{
 			return err
 		}
 
-		var changes, errors int
+		var totalChanges, totalErrors int
 
 		for _, arg := range args {
 			fmt.Println(arg)
@@ -32,12 +32,16 @@ var mergeCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			fmt.Printf("  Result: %d changes, %d errors\n", c, e)
-			changes += c
-			errors += e
+			fmt.Printf("Result for %s: %d changes, %d errors\n", arg, c, e)
+			totalChanges += c
+			totalErrors += e
 		}
 
-		if changes > 0 {
+		if len(args) > 1 {
+			fmt.Printf("Overall result: %d changes, %d errors\n", totalChanges, totalErrors)
+		}
+
+		if totalChanges > 0 {
 			if err := sb.Write(); err != nil {
 				// The on disk block cache is tainted but the on-disk superblock
 				// file does not reflect this. Time for garbage collection :-)

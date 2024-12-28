@@ -99,7 +99,12 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int,
 		newFullPath := path.Join(fullPath, e.Name())
 
 		if e.IsDir() {
-			sb.walkDir(newFullPath, ip)
+			c, e, err := sb.walkDir(newFullPath, ip)
+			changes += c
+			errors += e
+			if err != nil {
+				return changes, errors, err
+			}
 			continue
 		}
 
