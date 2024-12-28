@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"fmt"
 	"hash/crc64"
 	"os"
 )
@@ -22,7 +23,7 @@ func FromJsonSL(o map[string]interface{}) *Symlink {
 
 func (sl *Symlink) isEntry() {}
 
-func (sl *Symlink) Hash(path string) uint64 {
+func (sl *Symlink) Hash(path string) string {
 	h := crc64.New(crc64.MakeTable(crc64.ECMA))
 
 	h.Write([]byte("symlink"))
@@ -30,7 +31,7 @@ func (sl *Symlink) Hash(path string) uint64 {
 	sl.FileStats.hash(h)
 	h.Write([]byte(sl.Target))
 
-	return h.Sum64()
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePath string) (int, error) {
@@ -45,7 +46,7 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 	h := sl.Hash(relativePath)
 	entries, ok := sb.Entries[relativePath]
 	if !ok {
-		sb.Entries[relativePath] = make(map[uint64]interface{})
+		sb.Entries[relativePath] = make(map[string]interface{})
 		sb.Entries[relativePath][h] = sl
 		return 1, nil
 	}

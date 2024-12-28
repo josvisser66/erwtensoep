@@ -35,12 +35,13 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	defer f.Close()
 
 	blob := &Blob{
-		Blocks: make([]*Block, 0, 1+rf.size/BlockSize),
-		Size:   rf.Size,
-		size:   rf.size,
+		Blocks:   make([]*Block, 0, 1+rf.size/BlockSize),
+		Size:     rf.Size,
+		size:     rf.size,
+		RefCount: 1,
 	}
 
-	blobID := crc64.New(crc64.MakeTable(crc64.ECMA))
+	blobIDHash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	var n int
 
 	for err != io.EOF {
@@ -60,16 +61,20 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 				return nil, err
 			}
 			blob.Blocks = append(blob.Blocks, block)
-			blobID.Write([]byte(block.ID))
+			blobIDHash.Write([]byte(block.ID))
 		}
 	}
 
-	blob.ID = fmt.Sprintf("%d", blobID.Sum64())
-	sb.Blobs[blob.ID] = blob
+	blob.ID = fmt.Sprintf("%016x", blobIDHash.Sum64())
+	if b, ok := sb.Blobs[blob.ID]; ok {
+		b.RefCount++
+	} else {
+		sb.Blobs[blob.ID] = blob
+	}
 	return blob, nil
 }
 
-func (rf *RegularFile) Hash(path string) uint64 {
+func (rf *RegularFile) Hash(path string) string {
 	h := crc64.New(crc64.MakeTable(crc64.ECMA))
 
 	h.Write([]byte("regularfile"))
@@ -80,7 +85,7 @@ func (rf *RegularFile) Hash(path string) uint64 {
 	// mean that we would have to read the entire file just
 	// to see if it is in the map.
 
-	return h.Sum64()
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string) (int, error) {
@@ -94,7 +99,7 @@ func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relati
 		} else {
 			rf.BlobID = blob.ID
 		}
-		sb.Entries[relativePath] = make(map[uint64]interface{})
+		sb.Entries[relativePath] = make(map[string]interface{})
 		sb.Entries[relativePath][h] = rf
 		return 1, nil
 	}

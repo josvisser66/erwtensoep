@@ -2,7 +2,9 @@ package fs
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -13,19 +15,19 @@ import (
 
 type Entry interface {
 	isEntry()
-	Hash(path string) uint64
+	Hash(path string) string // 16 character hexadecimal
 }
 
 type Superblock struct {
 	Version    int                               `json:"version"`
 	Generation int                               `json:"generation"`
-	Entries    map[string]map[uint64]interface{} `json:"entries"`
+	Entries    map[string]map[string]interface{} `json:"entries"`
 	Blocks     map[string]*Block
 	Blobs      map[string]*Blob
 	LastUpdate time.Time `json:"last_update"` // will be encoded as a string
 
 	srcDir       string
-	backupDir    string
+	archiveDir   string
 	sbFile       string
 	readFromDisk bool
 	blocksDir    string
@@ -53,15 +55,18 @@ func (sb *Superblock) Write() error {
 	return nil
 }
 
-func ReadSuperblock(backupDir string) (*Superblock, error) {
+func ReadSuperblock(archiveDir string) (*Superblock, error) {
+	if archiveDir == "" {
+		return nil, errors.New("Please specify the location of the archive directory")
+	}
 	var sb *Superblock
 	var err error
 
-	backupDir, err = filepath.Abs(backupDir)
+	archiveDir, err = filepath.Abs(archiveDir)
 	if err != nil {
 		return nil, err
 	}
-	sbFile := path.Join(backupDir, "superblock.json")
+	sbFile := path.Join(archiveDir, "superblock.json")
 	b, err := os.ReadFile(sbFile)
 	if err == nil {
 		if err = json.Unmarshal(b, &sb); err != nil {
@@ -73,7 +78,7 @@ func ReadSuperblock(backupDir string) (*Superblock, error) {
 		sb = &Superblock{
 			Version:    0,
 			Generation: 0,
-			Entries:    make(map[string]map[uint64]interface{}),
+			Entries:    make(map[string]map[string]interface{}),
 			Blobs:      make(map[string]*Blob),
 			Blocks:     make(map[string]*Block),
 			LastUpdate: time.Time{},
@@ -103,11 +108,11 @@ func ReadSuperblock(backupDir string) (*Superblock, error) {
 		}
 	}
 
-	sb.backupDir = backupDir
+	sb.archiveDir = archiveDir
 	sb.sbFile = sbFile
 
 	// Makes sure that the blocks directory exists.
-	sb.blocksDir = path.Join(backupDir, "blocks")
+	sb.blocksDir = path.Join(archiveDir, "blocks")
 	_, err = os.Stat(sb.blocksDir)
 	if err == nil {
 		return sb, nil
@@ -133,5 +138,19 @@ func (sb *Superblock) blockWrite(block *Block, data []byte) error {
 	}
 
 	fileName := path.Join(dirName, block.ID[14:16])
-	return os.WriteFile(fileName, data, 0640)
+	fout, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer fout.Close()
+	gzipWriter := gzip.NewWriter(fout)
+	defer gzipWriter.Close()
+	n, err := gzipWriter.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return fmt.Errorf("unexpected number of bytes written: %d, expected %d", n, len(data))
+	}
+	return nil
 }
