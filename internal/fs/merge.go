@@ -27,7 +27,11 @@ func (sb *Superblock) merge(fullPath string, info os.FileInfo, options *Options)
 	if mode&(os.ModeNamedPipe|os.ModeSocket|os.ModeDevice) != 0 {
 		return 0, nil
 	}
-	return sb.mergeRegularfile(fullPath, info, relativePath, options)
+	n, err := sb.mergeRegularfile(fullPath, info, relativePath, options)
+	if err != nil {
+		return n, err
+	}
+	return n, sb.MaybeWrite()
 }
 
 type ignorePatterns struct {
