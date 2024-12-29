@@ -9,6 +9,7 @@ import (
 
 func init() {
 	rootCmd.AddCommand(mergeCmd)
+	addSizeLimit(mergeCmd)
 }
 
 var mergeCmd = &cobra.Command{
@@ -25,10 +26,11 @@ var mergeCmd = &cobra.Command{
 		}
 
 		var totalChanges, totalErrors int
+		options := makeOptions()
 
 		for _, arg := range args {
 			fmt.Println(arg)
-			c, e, err := sb.Walk(arg)
+			c, e, err := sb.Merge(arg, options)
 			if err != nil {
 				return err
 			}

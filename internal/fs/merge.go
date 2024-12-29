@@ -9,14 +9,13 @@ import (
 	"strings"
 )
 
-func (sb *Superblock) merge(fullPath string, info os.FileInfo) (int, error) {
+func (sb *Superblock) merge(fullPath string, info os.FileInfo, options *Options) (int, error) {
 	if info == nil {
 		return 0, errors.New("file info is nil")
 	}
 	if info.IsDir() {
 		return 0, nil
 	}
-
 	relativePath, err := filepath.Rel(sb.srcDir, fullPath)
 	if err != nil {
 		return 0, err
@@ -28,7 +27,7 @@ func (sb *Superblock) merge(fullPath string, info os.FileInfo) (int, error) {
 	if mode&(os.ModeNamedPipe|os.ModeSocket|os.ModeDevice) != 0 {
 		return 0, nil
 	}
-	return sb.mergeRegularfile(fullPath, info, relativePath)
+	return sb.mergeRegularfile(fullPath, info, relativePath, options)
 }
 
 type ignorePatterns struct {
@@ -70,7 +69,7 @@ func readIgnorePatterns(fullPath string, prev *ignorePatterns) (*ignorePatterns,
 	return ip, nil
 }
 
-func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int, errors int, err error) {
+func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Options) (changes int, errors int, err error) {
 	// Skip the archive directory.
 	if strings.HasPrefix(fullPath, sb.archiveDir) {
 		fmt.Println("WARNING: the archive directory is in the source directory (skipped)")
@@ -99,7 +98,7 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int,
 		newFullPath := path.Join(fullPath, e.Name())
 
 		if e.IsDir() {
-			c, e, err := sb.walkDir(newFullPath, ip)
+			c, e, err := sb.walkDir(newFullPath, ip, options)
 			changes += c
 			errors += e
 			if err != nil {
@@ -114,7 +113,7 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int,
 			fmt.Printf("Error reading file info for %s: %v\n", newFullPath, err)
 		} else {
 			fmt.Printf("%s [%d bytes]\n", newFullPath, info.Size())
-			n, err := sb.merge(newFullPath, info)
+			n, err := sb.merge(newFullPath, info, options)
 			if err != nil {
 				errors++
 				fmt.Printf("Error processing file %s: %v\n", newFullPath, err)
@@ -128,11 +127,11 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int,
 	return
 }
 
-func (sb *Superblock) Walk(srcDir string) (changes int, errors int, err error) {
+func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, errors int, err error) {
 	sb.srcDir, err = filepath.Abs(srcDir)
 	if err != nil {
 		return 0, 1, err
 	}
 
-	return sb.walkDir(sb.srcDir, nil)
+	return sb.walkDir(sb.srcDir, nil, options)
 }

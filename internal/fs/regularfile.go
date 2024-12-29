@@ -93,7 +93,11 @@ func (rf *RegularFile) Hash() string {
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 
-func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string) (int, error) {
+func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string, options *Options) (int, error) {
+	if info.Size() > options.SizeLimit {
+		fmt.Println("Skipped: for size limit")
+		return 0, nil
+	}
 	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}
 	ID := rf.Hash()
 	versions, ok := sb.Entries[relativePath]
