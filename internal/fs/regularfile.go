@@ -16,7 +16,8 @@ type RegularFile struct {
 // Note: global buffer! Single threaded!
 var buf = make([]byte, BlockSize)
 
-func (rf *RegularFile) isEntry() {}
+func (rf *RegularFile) isEntry()        {}
+func (rf *RegularFile) getPath() string { return rf.Path }
 
 func FromJsonRF(o map[string]interface{}) *RegularFile {
 	blobID, ok := o["blob_id"].(string)
@@ -40,10 +41,9 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	defer f.Close()
 
 	blob := &Blob{
-		Blocks:   make([]*Block, 0, 1+rf.size/BlockSize),
-		Size:     rf.Size,
-		size:     rf.size,
-		RefCount: 1,
+		Blocks: make([]*Block, 0, 1+rf.size/BlockSize),
+		Size:   rf.Size,
+		size:   rf.size,
 	}
 
 	blobIDHash := crc64.New(crc64.MakeTable(crc64.ECMA))
@@ -71,15 +71,16 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	}
 
 	blob.ID = fmt.Sprintf("%016x", blobIDHash.Sum64())
-	if b, ok := sb.Blobs[blob.ID]; ok {
-		b.RefCount++
-	} else {
+	if b, ok := sb.Blobs[blob.ID]; !ok {
+		blob.RefCount++
 		sb.Blobs[blob.ID] = blob
+	} else {
+		b.RefCount++
 	}
 	return blob, sb.jsonWrite(sb.blobsDir, blob.ID, blob)
 }
 
-func (rf *RegularFile) Hash() string {
+func (rf *RegularFile) hash() string {
 	h := crc64.New(crc64.MakeTable(crc64.ECMA))
 
 	h.Write([]byte("regularfile"))
@@ -99,7 +100,7 @@ func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relati
 		return 0, nil
 	}
 	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}
-	ID := rf.Hash()
+	ID := rf.hash()
 	versions, ok := sb.Entries[relativePath]
 	if !ok {
 		// File does not exist in the metadata at all.

@@ -15,7 +15,8 @@ import (
 
 type Entry interface {
 	isEntry()
-	Hash() string // 16 character hexadecimal
+	hash() string // 16 character hexadecimal
+	getPath() string
 }
 
 type Superblock struct {
@@ -80,6 +81,52 @@ func mkdir(save *string, archiveDir, subDir string) (err error) {
 	return err
 }
 
+func newSuperblock() *Superblock {
+	return &Superblock{
+		Version:    0,
+		Generation: 0,
+		Entries:    make(map[string]map[string]interface{}),
+		Blobs:      make(map[string]*Blob),
+		Blocks:     make(map[string]*Block),
+		LastUpdate: time.Time{},
+	}
+}
+
+func (sb *Superblock) fix(archiveDir, sbFile string) (err error) {
+	// Fixes the interface{} back to actual objects.
+	for _, m := range sb.Entries {
+		for k, o := range m {
+			if sl := FromJsonSL(o.(map[string]interface{})); sl != nil {
+				m[k] = sl
+			} else if rf := FromJsonRF(o.(map[string]interface{})); rf != nil {
+				m[k] = rf
+			} else {
+				panic(fmt.Sprintf("Cannot convert: %v", o))
+			}
+		}
+	}
+
+	// Fix the blob size cache.
+	for _, b := range sb.Blobs {
+		b.size, err = strconv.ParseInt(b.Size, 10, 64)
+		if err != nil {
+			return
+		}
+	}
+
+	sb.archiveDir = archiveDir
+	sb.sbFile = sbFile
+
+	// Makes sure that the metadata directories exists.
+	if err = mkdir(&sb.blocksDir, archiveDir, "blocks"); err != nil {
+		return
+	}
+	if err = mkdir(&sb.entriesDir, archiveDir, "entries"); err != nil {
+		return
+	}
+	return mkdir(&sb.blobsDir, archiveDir, "blobs")
+}
+
 func ReadSuperblock(archiveDir string) (*Superblock, error) {
 	if archiveDir == "" {
 		return nil, errors.New("Please specify the location of the archive directory")
@@ -100,54 +147,12 @@ func ReadSuperblock(archiveDir string) (*Superblock, error) {
 		sb.readFromDisk = true
 	} else if os.IsNotExist(err) {
 		fmt.Println("Creating new super block")
-		sb = &Superblock{
-			Version:    0,
-			Generation: 0,
-			Entries:    make(map[string]map[string]interface{}),
-			Blobs:      make(map[string]*Blob),
-			Blocks:     make(map[string]*Block),
-			LastUpdate: time.Time{},
-		}
+		sb = newSuperblock()
 	} else {
 		return nil, err
 	}
 
-	// Fixes the interface{} back to actual objects.
-	for _, m := range sb.Entries {
-		for k, o := range m {
-			if sl := FromJsonSL(o.(map[string]interface{})); sl != nil {
-				m[k] = sl
-			} else if rf := FromJsonRF(o.(map[string]interface{})); rf != nil {
-				m[k] = rf
-			} else {
-				panic(fmt.Sprintf("Cannot convert: %v", o))
-			}
-		}
-	}
-
-	// Fix the blob size cache.
-	for _, b := range sb.Blobs {
-		b.size, err = strconv.ParseInt(b.Size, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	sb.archiveDir = archiveDir
-	sb.sbFile = sbFile
-
-	// Makes sure that the metadata directories exists.
-	if err := mkdir(&sb.blocksDir, archiveDir, "blocks"); err != nil {
-		return nil, err
-	}
-	if err := mkdir(&sb.entriesDir, archiveDir, "entries"); err != nil {
-		return nil, err
-	}
-	if err := mkdir(&sb.blobsDir, archiveDir, "blobs"); err != nil {
-		return nil, err
-	}
-
-	return sb, nil
+	return sb, sb.fix(archiveDir, sbFile)
 }
 
 func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {

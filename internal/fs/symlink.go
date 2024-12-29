@@ -12,6 +12,9 @@ type Symlink struct {
 	Path   string `json:"path"`
 }
 
+func (sl *Symlink) isEntry()        {}
+func (sl *Symlink) getPath() string { return sl.Path }
+
 func FromJsonSL(o map[string]interface{}) *Symlink {
 	target, ok := o["target"].(string)
 	if !ok {
@@ -26,13 +29,11 @@ func FromJsonSL(o map[string]interface{}) *Symlink {
 	return sl
 }
 
-func (sl *Symlink) isEntry() {}
-
-func (sl *Symlink) Hash(path string) string {
+func (sl *Symlink) hash() string {
 	h := crc64.New(crc64.MakeTable(crc64.ECMA))
 
 	h.Write([]byte("symlink"))
-	h.Write([]byte(path))
+	h.Write([]byte(sl.Path))
 	sl.FileStats.hash(h)
 	h.Write([]byte(sl.Target))
 
@@ -49,12 +50,12 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 		Target:    target,
 		Path:      relativePath,
 	}
-	h := sl.Hash(relativePath)
+	h := sl.hash()
 	entries, ok := sb.Entries[relativePath]
 	if !ok {
 		sb.Entries[relativePath] = make(map[string]interface{})
 		sb.Entries[relativePath][h] = sl
-		return 1, nil
+		return 1, sb.jsonWrite(sb.entriesDir, h, sl)
 	}
 
 	if _, ok := entries[h]; ok {
@@ -62,5 +63,5 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 	}
 
 	entries[h] = sl
-	return 1, nil
+	return 1, sb.jsonWrite(sb.entriesDir, h, sl)
 }
