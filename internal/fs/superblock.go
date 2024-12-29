@@ -3,6 +3,7 @@ package fs
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,9 +24,9 @@ type Superblock struct {
 	Version    int                               `json:"version"`
 	Generation int                               `json:"generation"`
 	Entries    map[string]map[string]interface{} `json:"entries"`
-	Blocks     map[string]*Block
-	Blobs      map[string]*Blob
-	LastUpdate time.Time `json:"last_update"` // will be encoded as a string
+	Blocks     map[string]*Block                 `json:"blocks"`
+	Blobs      map[string]*Blob                  `json:"blobs"`
+	LastUpdate time.Time                         `json:"last_update"` // will be encoded as a string
 
 	srcDir       string
 	archiveDir   string
@@ -36,6 +37,7 @@ type Superblock struct {
 	blobsDir     string
 
 	bytesWritten int
+	// TODO: Add total bytes written.
 }
 
 func (sb *Superblock) Write() error {
@@ -164,18 +166,17 @@ func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {
 }
 
 func (sb *Superblock) dataWrite(baseDir, hash string, data []byte) error {
-	dirName := path.Join(baseDir, dirName(hash))
-	if err := os.MkdirAll(dirName, 0700); err != nil {
+	fname, err := filename(baseDir, hash)
+	if err != nil {
 		return err
 	}
-
-	fileName := path.Join(dirName, hash[14:16])
-	fout, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	fout, err := os.OpenFile(fname, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
 	defer fout.Close()
 	gzipWriter := gzip.NewWriter(fout)
+	gzipWriter.Extra = binary.LittleEndian.AppendUint32(gzipWriter.Extra, uint32(len(data)))
 	defer gzipWriter.Close()
 	n, err := gzipWriter.Write(data)
 	if err != nil {

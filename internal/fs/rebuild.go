@@ -3,6 +3,7 @@ package fs
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,6 +48,30 @@ func RebuildSuperblock(archiveDir string) error {
 		}
 		// Maybe parse blob.Size into blob.size?
 		blob.RefCount = 0
+
+		for _, blockID := range blob.Blocks {
+			if _, ok := sb.Blocks[blockID]; ok {
+				continue
+			}
+			fname, err := filename(sb.blocksDir, blockID)
+			if err != nil {
+				return err
+			}
+			size, err := func() (uint32, error) {
+				fin, err := os.Open(fname)
+				if err != nil {
+					return 0, err
+				}
+				defer fin.Close()
+				rdr, err := gzip.NewReader(fin)
+				if err != nil {
+					return 0, err
+				}
+				return binary.LittleEndian.Uint32(rdr.Extra), nil
+			}()
+			sb.Blocks[blockID] = &Block{blockID, size}
+		}
+
 		sb.Blobs[blob.ID] = blob
 
 		n++

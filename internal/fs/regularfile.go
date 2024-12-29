@@ -41,7 +41,7 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	defer f.Close()
 
 	blob := &Blob{
-		Blocks: make([]*Block, 0, 1+rf.size/BlockSize),
+		Blocks: make([]string, 0, 1+rf.size/BlockSize),
 		Size:   rf.Size,
 		size:   rf.size,
 	}
@@ -50,24 +50,38 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	var n int
 
 	for err != io.EOF {
-		n, err = f.Read(buf)
-		if err != nil && err != io.EOF {
+		if n, err = f.Read(buf); err != nil && err != io.EOF {
 			return nil, err
+		} else if n == 0 {
+			// EOF coming up...
+			continue
 		}
 
-		if n > 0 {
-			h := crc64.New(crc64.MakeTable(crc64.ECMA))
-			h.Write(buf[0:n])
-			block := &Block{
-				ID:   fmt.Sprintf("%016x", h.Sum64()),
-				Size: uint32(n),
-			}
-			if err := sb.dataWrite(sb.blocksDir, block.ID, buf[0:n]); err != nil {
+		h := crc64.New(crc64.MakeTable(crc64.ECMA))
+		h.Write(buf[0:n])
+		id := fmt.Sprintf("%016x", h.Sum64())
+
+		var block *Block
+		var ok bool
+
+		if block, ok = sb.Blocks[id]; !ok {
+			// Creates a new block.
+			block = &Block{ID: id, Size: uint32(n)}
+			if exists, err := sb.blockExists(block); err != nil {
 				return nil, err
+			} else if !exists {
+				if err := sb.dataWrite(sb.blocksDir, block.ID, buf[0:n]); err != nil {
+					return nil, err
+				}
+			} else {
+				fmt.Printf("Block already exists on disk: %v\n", block)
+				// TODO: Add an option to always rewrite the block on disk
 			}
-			blob.Blocks = append(blob.Blocks, block)
-			blobIDHash.Write([]byte(block.ID))
+
+			sb.Blocks[id] = block
 		}
+		blob.Blocks = append(blob.Blocks, id)
+		blobIDHash.Write([]byte(block.ID))
 	}
 
 	blob.ID = fmt.Sprintf("%016x", blobIDHash.Sum64())
@@ -82,7 +96,6 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 
 func (rf *RegularFile) hash() string {
 	h := crc64.New(crc64.MakeTable(crc64.ECMA))
-
 	h.Write([]byte("regularfile"))
 	h.Write([]byte(rf.Path))
 	rf.FileStats.hash(h)

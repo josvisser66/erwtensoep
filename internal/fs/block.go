@@ -1,8 +1,7 @@
 package fs
 
 import (
-	"fmt"
-	"path"
+	"os"
 )
 
 const BlockSize = 1024 * 1024
@@ -12,16 +11,18 @@ type Block struct {
 	Size uint32 `json:"size"`
 }
 
-func dirName(hash string) string {
-	if len(hash) != 16 {
-		panic(fmt.Sprintf("Hash length mismatch: len(%s) = %d != 16", hash, len(hash)))
+func (sb *Superblock) blockExists(b *Block) (bool, error) {
+	fname, err := filename(sb.blocksDir, b.ID)
+	if err != nil {
+		return false, err
 	}
-
-	s := ""
-
-	for i := 0; i < 14; i += 2 {
-		s = path.Join(s, hash[i:i+2])
+	_, err = os.Stat(fname)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
-
-	return s
+	// Note: We are not checking the size because GZip.
+	return true, nil
 }
