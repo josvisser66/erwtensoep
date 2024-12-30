@@ -3,6 +3,7 @@ package fs
 import (
 	"errors"
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"os"
 	"path"
 	"path/filepath"
@@ -141,7 +142,7 @@ func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, error
 	}
 
 	defer func() {
-		fmt.Printf("Total bytes written: %d\n", sb.totalBytesWritten)
+		fmt.Printf("Total bytes written: %s\n", humanize.Comma(int64(sb.totalBytesWritten)))
 	}()
 
 	return sb.walkDir(sb.srcDir, nil, options)
