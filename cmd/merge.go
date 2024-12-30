@@ -9,7 +9,9 @@ import (
 
 func init() {
 	rootCmd.AddCommand(mergeCmd)
-	addSizeLimit(mergeCmd)
+	addMinSize(mergeCmd)
+	addMaxSize(mergeCmd)
+	addDryRun(mergeCmd)
 }
 
 var mergeCmd = &cobra.Command{
@@ -20,7 +22,7 @@ var mergeCmd = &cobra.Command{
 			return errors.New("no source directories specified")
 		}
 
-		sb, err := fs.ReadSuperblock(archiveDir)
+		sb, err := fs.GetSuperblock(archiveDir, dryRun)
 		if err != nil {
 			return err
 		}

@@ -1,5 +1,6 @@
 package fs
 
 type Options struct {
-	SizeLimit int64
+	MinSize int64
+	MaxSize int64
 }

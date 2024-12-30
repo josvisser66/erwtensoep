@@ -36,11 +36,15 @@ type Superblock struct {
 	entriesDir   string
 	blobsDir     string
 
-	bytesWritten int
-	// TODO: Add total bytes written.
+	bytesWritten      uint64
+	dryRun            bool
+	totalBytesWritten uint64
 }
 
 func (sb *Superblock) Write() error {
+	if sb.dryRun {
+		return nil
+	}
 	fmt.Printf("Saving super block (%d)\n", sb.bytesWritten)
 	if sb.readFromDisk {
 		if err := os.Rename(sb.sbFile, fmt.Sprintf("%s.bak", sb.sbFile)); err != nil {
@@ -94,7 +98,9 @@ func newSuperblock() *Superblock {
 	}
 }
 
-func (sb *Superblock) fix(archiveDir, sbFile string) (err error) {
+func (sb *Superblock) fix(archiveDir, sbFile string, dryRun bool) (err error) {
+	sb.dryRun = dryRun
+
 	// Fixes the interface{} back to actual objects.
 	for _, m := range sb.Entries {
 		for k, o := range m {
@@ -129,7 +135,7 @@ func (sb *Superblock) fix(archiveDir, sbFile string) (err error) {
 	return mkdir(&sb.blobsDir, archiveDir, "blobs")
 }
 
-func ReadSuperblock(archiveDir string) (*Superblock, error) {
+func GetSuperblock(archiveDir string, dryRun bool) (*Superblock, error) {
 	if archiveDir == "" {
 		return nil, errors.New("Please specify the location of the archive directory")
 	}
@@ -154,7 +160,7 @@ func ReadSuperblock(archiveDir string) (*Superblock, error) {
 		return nil, err
 	}
 
-	return sb, sb.fix(archiveDir, sbFile)
+	return sb, sb.fix(archiveDir, sbFile, dryRun)
 }
 
 func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {
@@ -166,6 +172,10 @@ func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {
 }
 
 func (sb *Superblock) dataWrite(baseDir, hash string, data []byte) error {
+	if sb.dryRun {
+		sb.totalBytesWritten += uint64(len(data))
+		return nil
+	}
 	fname, err := filename(baseDir, hash)
 	if err != nil {
 		return err
@@ -185,6 +195,7 @@ func (sb *Superblock) dataWrite(baseDir, hash string, data []byte) error {
 	if n != len(data) {
 		return fmt.Errorf("unexpected number of bytes written: %d, expected %d", n, len(data))
 	}
-	sb.bytesWritten += len(data)
+	sb.bytesWritten += uint64(len(data))
+	sb.totalBytesWritten += uint64(len(data))
 	return nil
 }

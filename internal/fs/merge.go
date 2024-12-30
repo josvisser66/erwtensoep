@@ -140,5 +140,9 @@ func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, error
 		return 0, 1, err
 	}
 
+	defer func() {
+		fmt.Printf("Total bytes written: %d\n", sb.totalBytesWritten)
+	}()
+
 	return sb.walkDir(sb.srcDir, nil, options)
 }

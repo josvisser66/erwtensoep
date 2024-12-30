@@ -33,7 +33,7 @@ func readUnzipUnmarshal(path string, any interface{}) error {
 
 func RebuildSuperblock(archiveDir string) error {
 	sb := newSuperblock()
-	sb.fix(archiveDir, path.Join(archiveDir, "rebuilt_superblock.json"))
+	sb.fix(archiveDir, path.Join(archiveDir, "rebuilt_superblock.json"), false)
 
 	n := 0
 	fmt.Println("Parsing blobs")

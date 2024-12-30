@@ -108,8 +108,9 @@ func (rf *RegularFile) hash() string {
 }
 
 func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string, options *Options) (int, error) {
-	if info.Size() > options.SizeLimit {
-		fmt.Println("Skipped: for size limit")
+	size := info.Size()
+	if size > options.MaxSize || size < options.MinSize {
+		fmt.Printf("Skipped: Size %d not in [%d, %d]\n", size, options.MinSize, options.MaxSize)
 		return 0, nil
 	}
 	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}

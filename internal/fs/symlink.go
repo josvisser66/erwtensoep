@@ -62,6 +62,10 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 		return 0, nil
 	}
 
+	if sb.dryRun {
+		return 1, nil
+	}
+
 	entries[h] = sl
 	return 1, sb.jsonWrite(sb.entriesDir, h, sl)
 }
