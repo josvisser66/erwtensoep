@@ -13,8 +13,8 @@ func dirname(hash string) string {
 
 	s := ""
 
-	for i := 0; i < 14; i += 2 {
-		s = path.Join(s, hash[i:i+2])
+	for i := 0; i < 12; i += 4 {
+		s = path.Join(s, hash[i:i+4])
 	}
 
 	return s
@@ -25,5 +25,5 @@ func filename(base, hash string) (string, error) {
 	if err := os.MkdirAll(d, 0700); err != nil {
 		return "", err
 	}
-	return path.Join(d, hash[14:16]), nil
+	return path.Join(d, hash[12:16]), nil
 }
