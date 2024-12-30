@@ -61,7 +61,7 @@ func readIgnorePatterns(fullPath string, prev *ignorePatterns) (*ignorePatterns,
 	filename := path.Join(fullPath, ".erwtensoep")
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || os.IsPermission(err) {
 			return ip, nil
 		}
 		return nil, err
@@ -90,6 +90,9 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 
 	de, err = os.ReadDir(fullPath)
 	if err != nil {
+		if os.IsPermission(err) {
+			err = nil
+		}
 		return
 	}
 
