@@ -114,11 +114,15 @@ func (sb *Superblock) fix(archiveDir, sbFile string, dryRun bool) (err error) {
 		}
 	}
 
-	// Fix the blob size cache.
-	for _, b := range sb.Blobs {
-		b.size, err = strconv.ParseInt(b.Size, 10, 64)
+	// Fix the blob size cache and the block back pointers to the blobs they are in.
+	for _, blob := range sb.Blobs {
+		blob.size, err = strconv.ParseInt(blob.Size, 10, 64)
 		if err != nil {
 			return
+		}
+
+		for _, blockID := range blob.Blocks {
+			sb.Blocks[blockID].blobs = append(sb.Blocks[blockID].blobs, blob)
 		}
 	}
 

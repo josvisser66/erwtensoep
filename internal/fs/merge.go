@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dustin/go-humanize"
+	"josvisser.nl/erwtensoep/internal/utils"
 	"os"
 	"path"
 	"path/filepath"
@@ -81,7 +82,6 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 		return
 	}
 
-	fmt.Println("Enter", fullPath)
 	ip, err = readIgnorePatterns(fullPath, ip)
 	if err != nil {
 		return
@@ -99,7 +99,8 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 
 	for _, e := range de {
 		if ip.match(e.Name()) {
-			fmt.Println("Skipping", e.Name())
+			// Maybe for verbose option?
+			// fmt.Println("Skipping", e.Name())
 			continue
 		}
 
@@ -120,7 +121,6 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 			errors++
 			fmt.Printf("Error reading file info for %s: %v\n", newFullPath, err)
 		} else {
-			fmt.Printf("%s [%d bytes]\n", newFullPath, info.Size())
 			n, err := sb.merge(newFullPath, info, options)
 			if err != nil {
 				errors++
@@ -131,11 +131,13 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 		}
 	}
 
-	fmt.Println("Leaving", fullPath)
 	return
 }
 
 func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, errors int, err error) {
+	sw := utils.NewStopwatch(fmt.Sprintf("Merging of %s", srcDir))
+	defer sw.Stop()
+
 	sb.srcDir, err = filepath.Abs(srcDir)
 	if err != nil {
 		return 0, 1, err

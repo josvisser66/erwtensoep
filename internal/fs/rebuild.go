@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"josvisser.nl/erwtensoep/internal/utils"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,6 +33,9 @@ func readUnzipUnmarshal(path string, any interface{}) error {
 }
 
 func RebuildSuperblock(archiveDir string) error {
+	sw := utils.NewStopwatch("Rebuilding the super block")
+	defer sw.Stop()
+
 	sb := newSuperblock()
 	sb.fix(archiveDir, path.Join(archiveDir, "rebuilt_superblock.json"), false)
 
@@ -69,7 +73,7 @@ func RebuildSuperblock(archiveDir string) error {
 				}
 				return binary.LittleEndian.Uint32(rdr.Extra), nil
 			}()
-			sb.Blocks[blockID] = &Block{blockID, size}
+			sb.Blocks[blockID] = &Block{blockID, size, nil}
 		}
 
 		sb.Blobs[blob.ID] = blob

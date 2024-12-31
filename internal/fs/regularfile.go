@@ -2,6 +2,7 @@ package fs
 
 import (
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"hash/crc64"
 	"io"
 	"os"
@@ -34,6 +35,7 @@ func FromJsonRF(o map[string]interface{}) *RegularFile {
 }
 
 func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
+	fmt.Printf("%s [%s bytes]\n", path, humanize.Comma(rf.size))
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

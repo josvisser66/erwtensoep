@@ -53,6 +53,7 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 	h := sl.hash()
 	entries, ok := sb.Entries[relativePath]
 	if !ok {
+		fmt.Printf("%s -> %s\n", fullPath, sl.Target)
 		sb.Entries[relativePath] = make(map[string]interface{})
 		sb.Entries[relativePath][h] = sl
 		return 1, sb.jsonWrite(sb.entriesDir, h, sl)

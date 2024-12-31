@@ -9,6 +9,8 @@ const BlockSize = 1024 * 1024
 type Block struct {
 	ID   string `json:"id"`
 	Size uint32 `json:"size"`
+
+	blobs []*Blob // back pointers
 }
 
 func (sb *Superblock) blockExists(b *Block) (bool, error) {
