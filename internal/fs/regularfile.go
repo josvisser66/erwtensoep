@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	"github.com/dustin/go-humanize"
 	"hash/crc64"
@@ -50,8 +51,13 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 
 	blobIDHash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	var n int
+	var countBytesRead int64
 
 	for err != io.EOF {
+		if sb.sigReceived.Load() {
+			return nil, errors.New("signal received")
+		}
+		fmt.Printf("%d\r", countBytesRead)
 		if n, err = f.Read(buf); err != nil && err != io.EOF {
 			return nil, err
 		} else if n == 0 {
@@ -59,6 +65,7 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 			continue
 		}
 
+		countBytesRead += int64(n)
 		h := crc64.New(crc64.MakeTable(crc64.ECMA))
 		h.Write(buf[0:n])
 		id := fmt.Sprintf("%016x", h.Sum64())
@@ -86,6 +93,7 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 		blobIDHash.Write([]byte(block.ID))
 	}
 
+	fmt.Println()
 	blob.ID = fmt.Sprintf("%016x", blobIDHash.Sum64())
 	if b, ok := sb.Blobs[blob.ID]; !ok {
 		blob.RefCount++

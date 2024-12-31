@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,9 +37,12 @@ type Superblock struct {
 	entriesDir   string
 	blobsDir     string
 
+	dryRun bool
+
 	bytesWritten      uint64
-	dryRun            bool
 	totalBytesWritten uint64
+
+	sigReceived atomic.Bool
 }
 
 func (sb *Superblock) Write() error {

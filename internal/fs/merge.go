@@ -6,9 +6,11 @@ import (
 	"github.com/dustin/go-humanize"
 	"josvisser.nl/erwtensoep/internal/utils"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 func (sb *Superblock) merge(fullPath string, info os.FileInfo, options *Options) (int, error) {
@@ -98,6 +100,9 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 	}
 
 	for _, e := range de {
+		if sb.sigReceived.Load() {
+			return
+		}
 		if ip.match(e.Name()) {
 			// Maybe for verbose option?
 			// fmt.Println("Skipping", e.Name())
@@ -145,6 +150,16 @@ func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, error
 
 	defer func() {
 		fmt.Printf("Total bytes written: %s\n", humanize.Comma(int64(sb.totalBytesWritten)))
+	}()
+
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		sig := <-ch
+		fmt.Println("\nReceived signal:", sig)
+		fmt.Println("Please wait for the program to end to prevent archive corruption...")
+		sb.sigReceived.Store(true)
 	}()
 
 	return sb.walkDir(sb.srcDir, nil, options)
