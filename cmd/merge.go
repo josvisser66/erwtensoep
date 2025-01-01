@@ -12,6 +12,7 @@ func init() {
 	addMinSize(mergeCmd)
 	addMaxSize(mergeCmd)
 	addDryRun(mergeCmd)
+	addSuperblockWriteThreshold(mergeCmd)
 }
 
 var mergeCmd = &cobra.Command{
@@ -22,17 +23,16 @@ var mergeCmd = &cobra.Command{
 			return errors.New("no source directories specified")
 		}
 
-		sb, err := fs.GetSuperblock(archiveDir, dryRun)
+		sb, err := fs.GetSuperblock(&options)
 		if err != nil {
 			return err
 		}
 
 		var totalChanges, totalErrors int
-		options := makeOptions()
 
 		for _, arg := range args {
 			fmt.Println(arg)
-			c, e, err := sb.Merge(arg, options)
+			c, e, err := sb.Merge(arg)
 			if err != nil {
 				return err
 			}

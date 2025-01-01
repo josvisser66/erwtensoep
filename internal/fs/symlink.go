@@ -63,7 +63,7 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 		return 0, nil
 	}
 
-	if sb.dryRun {
+	if sb.options.DryRun {
 		return 1, nil
 	}
 

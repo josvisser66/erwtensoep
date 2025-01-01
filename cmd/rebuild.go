@@ -18,6 +18,6 @@ var rebuildCmd = &cobra.Command{
 			return errors.New("No arguments are expected")
 		}
 
-		return fs.RebuildSuperblock(archiveDir)
+		return fs.RebuildSuperblock(&options)
 	},
 }

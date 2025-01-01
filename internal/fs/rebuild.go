@@ -32,12 +32,12 @@ func readUnzipUnmarshal(path string, any interface{}) error {
 	return json.Unmarshal(b, any)
 }
 
-func RebuildSuperblock(archiveDir string) error {
+func RebuildSuperblock(options *Options) error {
 	sw := utils.NewStopwatch("Rebuilding the super block")
 	defer sw.Stop()
 
-	sb := newSuperblock()
-	sb.fix(archiveDir, path.Join(archiveDir, "rebuilt_superblock.json"), false)
+	sb := newSuperblock(options)
+	sb.fix(path.Join(options.ArchiveDir, "rebuilt_superblock.json"))
 
 	n := 0
 	fmt.Println("Parsing blobs")

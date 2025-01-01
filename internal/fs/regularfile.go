@@ -117,10 +117,10 @@ func (rf *RegularFile) hash() string {
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 
-func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string, options *Options) (int, error) {
+func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string) (int, error) {
 	size := info.Size()
-	if size > options.MaxSize || size < options.MinSize {
-		fmt.Printf("Skipped: Size %d not in [%d, %d]\n", size, options.MinSize, options.MaxSize)
+	if size < sb.options.MinSize || size > sb.options.MaxSize {
+		fmt.Printf("Skipped: Size %d not in [%d, %d]\n", size, sb.options.MinSize, sb.options.MaxSize)
 		return 0, nil
 	}
 	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}

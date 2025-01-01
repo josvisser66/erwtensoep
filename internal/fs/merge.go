@@ -13,7 +13,7 @@ import (
 	"syscall"
 )
 
-func (sb *Superblock) merge(fullPath string, info os.FileInfo, options *Options) (int, error) {
+func (sb *Superblock) merge(fullPath string, info os.FileInfo) (int, error) {
 	if info == nil {
 		return 0, errors.New("file info is nil")
 	}
@@ -31,11 +31,11 @@ func (sb *Superblock) merge(fullPath string, info os.FileInfo, options *Options)
 	if mode&(os.ModeNamedPipe|os.ModeSocket|os.ModeDevice) != 0 {
 		return 0, nil
 	}
-	n, err := sb.mergeRegularfile(fullPath, info, relativePath, options)
+	n, err := sb.mergeRegularfile(fullPath, info, relativePath)
 	if err != nil {
 		return n, err
 	}
-	return n, sb.MaybeWrite()
+	return n, sb.maybeWrite()
 }
 
 type ignorePatterns struct {
@@ -77,9 +77,9 @@ func readIgnorePatterns(fullPath string, prev *ignorePatterns) (*ignorePatterns,
 	return ip, nil
 }
 
-func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Options) (changes int, errors int, err error) {
+func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int, errors int, err error) {
 	// Skip the archive directory.
-	if strings.HasPrefix(fullPath, sb.archiveDir) {
+	if strings.HasPrefix(fullPath, sb.options.ArchiveDir) {
 		fmt.Println("WARNING: the archive directory is in the source directory (skipped)")
 		return
 	}
@@ -112,7 +112,7 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 		newFullPath := path.Join(fullPath, e.Name())
 
 		if e.IsDir() {
-			c, e, err := sb.walkDir(newFullPath, ip, options)
+			c, e, err := sb.walkDir(newFullPath, ip)
 			changes += c
 			errors += e
 			if err != nil {
@@ -126,7 +126,7 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 			errors++
 			fmt.Printf("Error reading file info for %s: %v\n", newFullPath, err)
 		} else {
-			n, err := sb.merge(newFullPath, info, options)
+			n, err := sb.merge(newFullPath, info)
 			if err != nil {
 				errors++
 				fmt.Printf("Error processing file %s: %v\n", newFullPath, err)
@@ -139,7 +139,7 @@ func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns, options *Opti
 	return
 }
 
-func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, errors int, err error) {
+func (sb *Superblock) Merge(srcDir string) (changes int, errors int, err error) {
 	sw := utils.NewStopwatch(fmt.Sprintf("Merging of %s", srcDir))
 	defer sw.Stop()
 
@@ -162,5 +162,5 @@ func (sb *Superblock) Merge(srcDir string, options *Options) (changes int, error
 		sb.sigReceived.Store(true)
 	}()
 
-	return sb.walkDir(sb.srcDir, nil, options)
+	return sb.walkDir(sb.srcDir, nil)
 }

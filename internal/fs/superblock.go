@@ -29,15 +29,14 @@ type Superblock struct {
 	Blobs      map[string]*Blob                  `json:"blobs"`
 	LastUpdate time.Time                         `json:"last_update"` // will be encoded as a string
 
+	options      *Options
 	srcDir       string
-	archiveDir   string
 	sbFile       string
 	readFromDisk bool
-	blocksDir    string
-	entriesDir   string
-	blobsDir     string
 
-	dryRun bool
+	blocksDir  string
+	entriesDir string
+	blobsDir   string
 
 	bytesWritten      uint64
 	totalBytesWritten uint64
@@ -46,7 +45,7 @@ type Superblock struct {
 }
 
 func (sb *Superblock) Write() error {
-	if sb.dryRun {
+	if sb.options.DryRun {
 		return nil
 	}
 	fmt.Printf("Saving super block (%d)\n", sb.bytesWritten)
@@ -72,7 +71,7 @@ func (sb *Superblock) Write() error {
 	return nil
 }
 
-func (sb *Superblock) MaybeWrite() error {
+func (sb *Superblock) maybeWrite() error {
 	if sb.bytesWritten >= 10*1024*1024 {
 		return sb.Write()
 	}
@@ -91,8 +90,9 @@ func mkdir(save *string, archiveDir, subDir string) (err error) {
 	return err
 }
 
-func newSuperblock() *Superblock {
+func newSuperblock(options *Options) *Superblock {
 	return &Superblock{
+		options:    options,
 		Version:    0,
 		Generation: 0,
 		Entries:    make(map[string]map[string]interface{}),
@@ -102,9 +102,7 @@ func newSuperblock() *Superblock {
 	}
 }
 
-func (sb *Superblock) fix(archiveDir, sbFile string, dryRun bool) (err error) {
-	sb.dryRun = dryRun
-
+func (sb *Superblock) fix(sbFile string) (err error) {
 	// Fixes the interface{} back to actual objects.
 	for _, m := range sb.Entries {
 		for k, o := range m {
@@ -130,45 +128,45 @@ func (sb *Superblock) fix(archiveDir, sbFile string, dryRun bool) (err error) {
 		}
 	}
 
-	sb.archiveDir = archiveDir
 	sb.sbFile = sbFile
 
 	// Makes sure that the metadata directories exists.
-	if err = mkdir(&sb.blocksDir, archiveDir, "blocks"); err != nil {
+	if err = mkdir(&sb.blocksDir, sb.options.ArchiveDir, "blocks"); err != nil {
 		return
 	}
-	if err = mkdir(&sb.entriesDir, archiveDir, "entries"); err != nil {
+	if err = mkdir(&sb.entriesDir, sb.options.ArchiveDir, "entries"); err != nil {
 		return
 	}
-	return mkdir(&sb.blobsDir, archiveDir, "blobs")
+	return mkdir(&sb.blobsDir, sb.options.ArchiveDir, "blobs")
 }
 
-func GetSuperblock(archiveDir string, dryRun bool) (*Superblock, error) {
-	if archiveDir == "" {
+func GetSuperblock(options *Options) (*Superblock, error) {
+	if options.ArchiveDir == "" {
 		return nil, errors.New("Please specify the location of the archive directory")
 	}
-	var sb *Superblock
 	var err error
 
-	archiveDir, err = filepath.Abs(archiveDir)
+	options.ArchiveDir, err = filepath.Abs(options.ArchiveDir)
 	if err != nil {
 		return nil, err
 	}
-	sbFile := path.Join(archiveDir, "superblock.json")
+	var sb *Superblock
+	sbFile := path.Join(options.ArchiveDir, "superblock.json")
 	b, err := os.ReadFile(sbFile)
 	if err == nil {
 		if err = json.Unmarshal(b, &sb); err != nil {
 			return nil, err
 		}
 		sb.readFromDisk = true
+		sb.options = options
 	} else if os.IsNotExist(err) {
 		fmt.Println("Creating new super block")
-		sb = newSuperblock()
+		sb = newSuperblock(options)
 	} else {
 		return nil, err
 	}
 
-	return sb, sb.fix(archiveDir, sbFile, dryRun)
+	return sb, sb.fix(sbFile)
 }
 
 func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {
@@ -180,7 +178,7 @@ func (sb *Superblock) jsonWrite(baseDir, hash string, data interface{}) error {
 }
 
 func (sb *Superblock) dataWrite(baseDir, hash string, data []byte) error {
-	if sb.dryRun {
+	if sb.options.DryRun {
 		sb.totalBytesWritten += uint64(len(data))
 		return nil
 	}
