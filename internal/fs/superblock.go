@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"josvisser.nl/erwtensoep/internal/utils"
 	"os"
 	"path"
 	"path/filepath"
@@ -44,10 +45,12 @@ type Superblock struct {
 }
 
 func (sb *Superblock) Write() error {
+	sw := utils.NewStopwatch("Writing the super block")
+	defer sw.Stop()
+
 	if sb.options.DryRun {
 		return nil
 	}
-	fmt.Printf("Saving super block (%d)\n", sb.bytesWritten)
 	if sb.readFromDisk {
 		if err := os.Rename(sb.sbFile, fmt.Sprintf("%s.bak", sb.sbFile)); err != nil {
 			return err
@@ -60,7 +63,9 @@ func (sb *Superblock) Write() error {
 		return err
 	}
 	defer fout.Close()
-	encoder := json.NewEncoder(gzip.NewWriter(fout))
+	wr := gzip.NewWriter(fout)
+	defer wr.Close()
+	encoder := json.NewEncoder(wr)
 	encoder.Encode(sb)
 	sb.bytesWritten = 0
 	return nil

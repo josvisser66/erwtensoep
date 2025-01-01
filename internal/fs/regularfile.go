@@ -6,6 +6,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"hash/crc64"
 	"io"
+	"josvisser.nl/erwtensoep/internal/utils"
 	"os"
 )
 
@@ -36,6 +37,7 @@ func FromJsonRF(o map[string]interface{}) *RegularFile {
 }
 
 func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
+	sw := utils.NewStopwatch("")
 	fmt.Printf("%s [%s bytes]\n", path, humanize.Comma(rf.size))
 	f, err := os.Open(path)
 	if err != nil {
@@ -93,7 +95,7 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 		blobIDHash.Write([]byte(block.ID))
 	}
 
-	fmt.Println()
+	fmt.Printf("%d bytes took %s\n", countBytesRead, sw.Elapsed())
 	blob.ID = fmt.Sprintf("%016x", blobIDHash.Sum64())
 	if b, ok := sb.Blobs[blob.ID]; !ok {
 		blob.RefCount++
@@ -120,7 +122,7 @@ func (rf *RegularFile) hash() string {
 func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string) (int, error) {
 	size := info.Size()
 	if size < sb.options.MinSize || size > sb.options.MaxSize {
-		fmt.Printf("Skipped: Size %d not in [%d, %d]\n", size, sb.options.MinSize, sb.options.MaxSize)
+		fmt.Printf("%s skipped: Size %d not in [%d, %d]\n", relativePath, size, sb.options.MinSize, sb.options.MaxSize)
 		return 0, nil
 	}
 	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}

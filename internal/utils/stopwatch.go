@@ -20,3 +20,7 @@ func NewStopwatch(activity string) *Stopwatch {
 func (sw *Stopwatch) Stop() {
 	fmt.Printf("%s took %s\n", sw.activity, time.Now().Sub(sw.startTime))
 }
+
+func (sw *Stopwatch) Elapsed() time.Duration {
+	return time.Now().Sub(sw.startTime)
+}
