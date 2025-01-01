@@ -9,8 +9,10 @@ import (
 
 var options fs.Options
 
-func addArchiveDirFlag(cmd *cobra.Command) {
-	cmd.PersistentFlags().StringVarP(&options.ArchiveDir, "archive", "a", "", "Location of the archive directory")
+func addArchiveDirFlag(cmd *cobra.Command) string {
+	flagName := "archive-dir"
+	cmd.PersistentFlags().StringVarP(&options.ArchiveDir, flagName, "a", "", "Location of the archive directory")
+	return flagName
 }
 
 func addMinSize(cmd *cobra.Command) {

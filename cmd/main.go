@@ -5,11 +5,13 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use: "erwtensoep",
+	Use:          "erwtensoep",
+	SilenceUsage: true,
 }
 
 func init() {
-	addArchiveDirFlag(rootCmd)
+	flagName := addArchiveDirFlag(rootCmd)
+	rootCmd.MarkFlagRequired(flagName)
 }
 
 func main() {
