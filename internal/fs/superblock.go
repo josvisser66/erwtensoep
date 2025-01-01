@@ -72,7 +72,7 @@ func (sb *Superblock) Write() error {
 }
 
 func (sb *Superblock) maybeWrite() error {
-	if sb.bytesWritten >= 10*1024*1024 {
+	if sb.bytesWritten >= uint64(sb.options.SuperblockWriteThreshold) {
 		return sb.Write()
 	}
 	return nil
