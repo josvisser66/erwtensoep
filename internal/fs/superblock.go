@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"bytes"
 	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
@@ -56,17 +55,13 @@ func (sb *Superblock) Write() error {
 	}
 	sb.Generation++
 	sb.LastUpdate = time.Now()
-	b, err := json.Marshal(&sb)
+	fout, err := os.Create(sb.sbFile)
 	if err != nil {
 		return err
 	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, b, "", "\t"); err != nil {
-		return err
-	}
-	if err := os.WriteFile(sb.sbFile, buf.Bytes(), 0644); err != nil {
-		return err
-	}
+	defer fout.Close()
+	encoder := json.NewEncoder(gzip.NewWriter(fout))
+	encoder.Encode(sb)
 	sb.bytesWritten = 0
 	return nil
 }
@@ -140,30 +135,37 @@ func (sb *Superblock) fix(sbFile string) (err error) {
 	return mkdir(&sb.blobsDir, sb.options.ArchiveDir, "blobs")
 }
 
-func GetSuperblock(options *Options) (*Superblock, error) {
+func GetSuperblock(options *Options) (sb *Superblock, err error) {
 	if options.ArchiveDir == "" {
 		return nil, errors.New("Please specify the location of the archive directory")
 	}
-	var err error
 
 	options.ArchiveDir, err = filepath.Abs(options.ArchiveDir)
 	if err != nil {
 		return nil, err
 	}
-	var sb *Superblock
-	sbFile := path.Join(options.ArchiveDir, "superblock.json")
-	b, err := os.ReadFile(sbFile)
-	if err == nil {
-		if err = json.Unmarshal(b, &sb); err != nil {
+	sbFile := path.Join(options.ArchiveDir, "superblock.json.gz")
+	var fin *os.File
+	if fin, err = os.Open(sbFile); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("Creating new super block")
+			sb = newSuperblock(options)
+		} else {
 			return nil, err
 		}
+	} else {
+		var rdr *gzip.Reader
+
+		rdr, err = gzip.NewReader(fin)
+		if err != nil {
+			return nil, err
+		}
+		if err = json.NewDecoder(rdr).Decode(&sb); err != nil {
+			return nil, err
+		}
+
 		sb.readFromDisk = true
 		sb.options = options
-	} else if os.IsNotExist(err) {
-		fmt.Println("Creating new super block")
-		sb = newSuperblock(options)
-	} else {
-		return nil, err
 	}
 
 	return sb, sb.fix(sbFile)
