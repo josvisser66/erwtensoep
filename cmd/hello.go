@@ -1,14 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"github.com/spf13/cobra"
 )
 
 func init() {
-	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(helloCmd)
 }
 
-var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Lists various things",
+var helloCmd = &cobra.Command{
+	Use:   "hello",
+	Short: "Says hello",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("Hello World!")
+	},
 }
