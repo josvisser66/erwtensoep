@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash"
@@ -19,6 +20,23 @@ type FileStats struct {
 	size  int64       // cache for Size
 	Mode  fs.FileMode `json:"mode"`  // is a small number
 	MTime time.Time   `json:"mtime"` // will be encoded as a string
+}
+
+func (f *FileStats) String() string {
+	//-rw-r--r--   1 josv  staff    96 Jan  1 10:38
+	var b bytes.Buffer
+
+	b.WriteString(f.Mode.String())
+	b.WriteRune(' ')
+	b.WriteString(fmt.Sprintf("%10s", f.Owner))
+	b.WriteRune(' ')
+	b.WriteString(fmt.Sprintf("%10s", f.Group))
+	b.WriteRune(' ')
+	b.WriteString(fmt.Sprintf("%10d", f.size))
+	b.WriteRune(' ')
+	b.WriteString(f.MTime.Format(time.RFC822))
+
+	return b.String()
 }
 
 func (f *FileStats) FromJson(o map[string]interface{}) {

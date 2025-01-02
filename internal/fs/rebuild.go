@@ -105,12 +105,13 @@ func RebuildSuperblock(options *Options) error {
 			panic(fmt.Sprintf("Cannot convert: %v", obj))
 		}
 		h := e.hash()
-		if versions, ok := sb.Entries[e.getPath()]; !ok {
+		entryPath := e.GetPath()
+		if versions, ok := sb.Entries[entryPath]; !ok {
 			versions = make(map[string]interface{})
 			versions[h] = e
-			sb.Entries[e.getPath()] = versions
+			sb.Entries[entryPath] = versions
 		} else {
-			sb.Entries[e.getPath()][h] = e
+			sb.Entries[entryPath][h] = e
 		}
 		n++
 		fmt.Printf("%s %7d\r", h, n)

@@ -18,7 +18,8 @@ import (
 type Entry interface {
 	isEntry()
 	hash() string // 16 character hexadecimal
-	getPath() string
+	GetPath() string
+	GetFileStats() *FileStats
 }
 
 type Superblock struct {

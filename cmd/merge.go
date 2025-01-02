@@ -9,10 +9,10 @@ import (
 
 func init() {
 	rootCmd.AddCommand(mergeCmd)
-	addMinSize(mergeCmd)
-	addMaxSize(mergeCmd)
-	addDryRun(mergeCmd)
-	addSuperblockWriteThreshold(mergeCmd)
+	addMinSizeFlag(mergeCmd)
+	addMaxSizeFlag(mergeCmd)
+	addDryRunFlag(mergeCmd)
+	addSuperblockWriteThresholdFlag(mergeCmd)
 }
 
 var mergeCmd = &cobra.Command{

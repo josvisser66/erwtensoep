@@ -12,8 +12,9 @@ type Symlink struct {
 	Path   string `json:"path"`
 }
 
-func (sl *Symlink) isEntry()        {}
-func (sl *Symlink) getPath() string { return sl.Path }
+func (sl *Symlink) isEntry()                 {}
+func (sl *Symlink) GetFileStats() *FileStats { return &sl.FileStats }
+func (sl *Symlink) GetPath() string          { return sl.Path }
 
 func FromJsonSL(o map[string]interface{}) *Symlink {
 	target, ok := o["target"].(string)

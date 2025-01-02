@@ -19,8 +19,9 @@ type RegularFile struct {
 // Note: global buffer! Single threaded!
 var buf = make([]byte, BlockSize)
 
-func (rf *RegularFile) isEntry()        {}
-func (rf *RegularFile) getPath() string { return rf.Path }
+func (rf *RegularFile) isEntry()                 {}
+func (rf *RegularFile) GetFileStats() *FileStats { return &rf.FileStats }
+func (rf *RegularFile) GetPath() string          { return rf.Path }
 
 func FromJsonRF(o map[string]interface{}) *RegularFile {
 	blobID, ok := o["blob_id"].(string)
