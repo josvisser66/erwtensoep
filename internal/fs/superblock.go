@@ -146,6 +146,9 @@ func GetSuperblock(options *Options) (sb *Superblock, err error) {
 		return nil, errors.New("Please specify the location of the archive directory")
 	}
 
+	sw := utils.NewStopwatch("Reading the superblock")
+	defer sw.Stop()
+
 	options.ArchiveDir, err = filepath.Abs(options.ArchiveDir)
 	if err != nil {
 		return nil, err
