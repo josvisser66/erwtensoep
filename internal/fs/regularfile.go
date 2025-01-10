@@ -96,13 +96,10 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 		blobIDHash.Write([]byte(block.ID))
 	}
 
-	fmt.Printf("%d bytes took %s\n", countBytesRead, sw.Elapsed())
+	fmt.Printf("%d bytes took %s (%s/sec)\n", countBytesRead, sw.Elapsed(), humanize.Bytes(uint64(float64(countBytesRead)/sw.Elapsed().Seconds())))
 	blob.ID = fmt.Sprintf("%016x", blobIDHash.Sum64())
-	if b, ok := sb.Blobs[blob.ID]; !ok {
-		blob.RefCount++
+	if _, ok := sb.Blobs[blob.ID]; !ok {
 		sb.Blobs[blob.ID] = blob
-	} else {
-		b.RefCount++
 	}
 	return blob, sb.jsonWrite(sb.blobsDir, blob.ID, blob)
 }

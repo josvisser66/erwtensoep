@@ -51,7 +51,6 @@ func RebuildSuperblock(options *Options) error {
 			return err
 		}
 		// Maybe parse blob.Size into blob.size?
-		blob.RefCount = 0
 
 		for _, blockID := range blob.Blocks {
 			if _, ok := sb.Blocks[blockID]; ok {
@@ -100,7 +99,6 @@ func RebuildSuperblock(options *Options) error {
 			e = sl
 		} else if rf := FromJsonRF(obj); rf != nil {
 			e = rf
-			sb.Blobs[rf.BlobID].RefCount++
 		} else {
 			panic(fmt.Sprintf("Cannot convert: %v", obj))
 		}

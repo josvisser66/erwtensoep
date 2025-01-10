@@ -20,19 +20,19 @@ var recipeCmd = &cobra.Command{
 		fmt.Println(`
 Ingredients:
 
-500 gram of split peas (dried are fine)
-2 decent sized boneless pork chops
-200 gram of panchetta
-2 liter of water
-2 medium sized onions
-2 leeks
+500 gram of split peas
+  2 decent sized boneless pork chops
+200 gram of thick pork belly strips
+  2 liter of water
+  2 medium sized onions
+  2 leeks
 900 gram celeriac
 180 gram carrots
 7.5 gram of fresh thyme
-2 dryed bay leaves
-2 beef Kielbasa sausages
+  2 dryed bay leaves
+  2 beef Kielbasa sausages (NL: Rookworst)
 
-All of this can be obtained at the Albert Hein super market in the Netherlands
+All of this can be obtained at the Albert Hein supermarket in the Netherlands
 or at the Wholefoods in the US.
 
 Step 1)
