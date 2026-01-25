@@ -8,6 +8,7 @@ import (
 	"io"
 	"josvisser.nl/erwtensoep/internal/utils"
 	"os"
+	"sync"
 )
 
 type RegularFile struct {
@@ -16,8 +17,35 @@ type RegularFile struct {
 	BlobID string `json:"blob_id"`
 }
 
-// Note: global buffer! Single threaded!
-var buf = make([]byte, BlockSize)
+// Buffer pool for block reads; protects shared reuse across concurrent merges.
+var bufPool = &bufferPool{}
+
+type bufferPool struct {
+	mu   sync.Mutex
+	pool [][]byte
+}
+
+func (bp *bufferPool) Get() []byte {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	n := len(bp.pool)
+	if n == 0 {
+		return make([]byte, BlockSize)
+	}
+	buf := bp.pool[n-1]
+	bp.pool[n-1] = nil
+	bp.pool = bp.pool[:n-1]
+	return buf
+}
+
+func (bp *bufferPool) Put(buf []byte) {
+	if len(buf) != BlockSize {
+		return
+	}
+	bp.mu.Lock()
+	bp.pool = append(bp.pool, buf)
+	bp.mu.Unlock()
+}
 
 func (rf *RegularFile) isEntry()                 {}
 func (rf *RegularFile) GetFileStats() *FileStats { return &rf.FileStats }
@@ -46,12 +74,16 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 	}
 	defer f.Close()
 
+	buf := bufPool.Get()
+	defer bufPool.Put(buf)
+
 	blob := &Blob{
 		Blocks: make([]string, 0, 1+rf.size/BlockSize),
 		Size:   rf.Size,
 		size:   rf.size,
 	}
 
+	// The blob ID is derived from the sequence of block IDs to make it content-addressed.
 	blobIDHash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	var n int
 	var countBytesRead int64
@@ -69,6 +101,7 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 		}
 
 		countBytesRead += int64(n)
+		// Block IDs are CRC64 of the block content.
 		h := crc64.New(crc64.MakeTable(crc64.ECMA))
 		h.Write(buf[0:n])
 		id := fmt.Sprintf("%016x", h.Sum64())

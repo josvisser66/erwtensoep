@@ -25,9 +25,11 @@ func (sb *Superblock) merge(fullPath string, info os.FileInfo) (int, error) {
 		return 0, err
 	}
 	mode := info.Mode()
+	// Treat symlinks separately to preserve targets.
 	if mode&os.ModeSymlink != 0 {
 		return sb.mergeSymlink(fullPath, info, relativePath)
 	}
+	// Skip special files like sockets, pipes, and devices.
 	if mode&(os.ModeNamedPipe|os.ModeSocket|os.ModeDevice) != 0 {
 		return 0, nil
 	}
@@ -44,6 +46,7 @@ type ignorePatterns struct {
 }
 
 func (ip *ignorePatterns) match(name string) bool {
+	// Patterns are inherited from parent directories.
 	for ip != nil {
 		for _, pattern := range ip.patterns {
 			if m, err := path.Match(pattern, name); err != nil {
@@ -78,7 +81,7 @@ func readIgnorePatterns(fullPath string, prev *ignorePatterns) (*ignorePatterns,
 }
 
 func (sb *Superblock) walkDir(fullPath string, ip *ignorePatterns) (changes int, errors int, err error) {
-	// Skip the archive directory.
+	// Skip the archive directory to avoid self-ingesting metadata.
 	if strings.HasPrefix(fullPath, sb.options.ArchiveDir) {
 		fmt.Println("WARNING: the archive directory is in the source directory (skipped)")
 		return
@@ -152,6 +155,7 @@ func (sb *Superblock) Merge(srcDir string) (changes int, errors int, err error) 
 		fmt.Printf("Total bytes written: %s\n", humanize.Comma(int64(sb.totalBytesWritten)))
 	}()
 
+	// Stop processing cleanly on SIGINT/SIGTERM to reduce archive corruption risk.
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 

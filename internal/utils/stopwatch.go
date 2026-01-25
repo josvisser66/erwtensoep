@@ -18,9 +18,11 @@ func NewStopwatch(activity string) *Stopwatch {
 }
 
 func (sw *Stopwatch) Stop() {
+	// Print elapsed wall-clock time for the labeled activity.
 	fmt.Printf("%s took %s\n", sw.activity, time.Now().Sub(sw.startTime))
 }
 
 func (sw *Stopwatch) Elapsed() time.Duration {
+	// Expose elapsed wall-clock time without stopping the stopwatch.
 	return time.Now().Sub(sw.startTime)
 }

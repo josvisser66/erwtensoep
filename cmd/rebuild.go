@@ -18,6 +18,7 @@ var rebuildCmd = &cobra.Command{
 			return errors.New("No arguments are expected")
 		}
 
+		// Rebuilds metadata from blobs and entries on disk.
 		return fs.RebuildSuperblock(&options)
 	},
 }

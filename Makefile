@@ -1,5 +1,10 @@
-all:
-	go build -o bin/erwtensoep cmd/*.go
+all: build
+
+build:
+	go build -o bin/erwtensoep ./cmd
+
+test:
+	go test ./...
 
 vet:
-	go vet cmd josvisser.nl/erwtensoep/internal/fs
+	go vet ./...

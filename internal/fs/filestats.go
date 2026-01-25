@@ -63,6 +63,7 @@ func (f *FileStats) FromJson(o map[string]interface{}) {
 	}
 	mode := o["mode"]
 	if fm, ok := mode.(float64); !ok {
+		// JSON numbers decode to float64 by default.
 		panic(fmt.Sprintf("Cannot convert file mode: %v (%T)", mode, mode))
 	} else {
 		f.Mode = fs.FileMode(fm)
@@ -71,6 +72,7 @@ func (f *FileStats) FromJson(o map[string]interface{}) {
 	if s, ok := mtime.(string); !ok {
 		panic(fmt.Sprintf("Cannot convert mtime: %v (%T)", mtime, mtime))
 	} else {
+		// Use RFC3339Nano to match encoding/json's time serialization format.
 		if f.MTime, err = time.Parse(time.RFC3339Nano, s); err != nil {
 			panic(fmt.Sprintf("Cannot parse mtime: %s", s))
 		}
@@ -102,6 +104,7 @@ func newFileStats(info os.FileInfo) FileStats {
 }
 
 func (fs *FileStats) hash(h hash.Hash64) {
+	// Write a stable, endian-specific representation for reproducible hashes.
 	h.Write([]byte(fs.Owner))
 	h.Write([]byte(fs.Group))
 	h.Write([]byte(fs.Size))

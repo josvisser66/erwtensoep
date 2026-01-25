@@ -1,31 +1,52 @@
 package main
 
 import (
+	"fmt"
 	"github.com/spf13/cobra"
 	"josvisser.nl/erwtensoep/internal/fs"
-	"regexp"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 func init() {
-	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(lsCmd)
 }
 
-var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Lists various things",
+var lsCmd = &cobra.Command{
+	Use:   "ls",
+	Short: "Lists archive entries",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return list(args, func(path string, versions map[string]interface{}) error {
+			e := latestVersion(versions)
+			stats := e.GetFileStats()
+			fmt.Printf("%s %10s %s\n", stats.MTime.Format("2006-01-02 15:04"), stats.Size, path)
+			return nil
+		})
+	},
 }
 
-func matchesOne(path string, regexps []*regexp.Regexp) bool {
-	if len(regexps) == 0 {
+func matchesAny(path string, patterns []string) bool {
+	if len(patterns) == 0 {
 		return true
 	}
 
-	for _, re := range regexps {
-		if re.Match([]byte(path)) {
+	path = filepath.ToSlash(path)
+	for _, pattern := range patterns {
+		p := filepath.ToSlash(pattern)
+		if p == "" {
+			continue
+		}
+		if strings.ContainsAny(p, "*?[") {
+			if ok, _ := filepath.Match(p, path); ok {
+				return true
+			}
+			continue
+		}
+		if path == p || strings.HasPrefix(path, p+"/") {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -35,18 +56,8 @@ func list(args []string, cb func(string, map[string]interface{}) error) error {
 		return err
 	}
 
-	var regexps []*regexp.Regexp
-
-	for _, arg := range args {
-		re, err := regexp.Compile(arg)
-		if err != nil {
-			return err
-		}
-		regexps = append(regexps, re)
-	}
-
 	for path, versions := range sb.Entries {
-		if matchesOne(path, regexps) {
+		if matchesAny(path, args) {
 			if err := cb(path, versions); err != nil {
 				return err
 			}
@@ -54,4 +65,21 @@ func list(args []string, cb func(string, map[string]interface{}) error) error {
 	}
 
 	return nil
+}
+
+func latestVersion(versions map[string]interface{}) fs.Entry {
+	var (
+		maxEntry fs.Entry
+		maxTime  time.Time
+	)
+
+	for _, v := range versions {
+		e := v.(fs.Entry)
+		if t := e.GetFileStats().MTime; t.After(maxTime) {
+			maxTime = t
+			maxEntry = e
+		}
+	}
+
+	return maxEntry
 }

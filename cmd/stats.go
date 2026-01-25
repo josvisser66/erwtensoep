@@ -37,6 +37,7 @@ var statsCmd = &cobra.Command{
 				maxVersions = l
 			}
 
+			// Only regular files contribute to stored data size; symlinks are metadata-only.
 			for _, version := range entry {
 				if v, ok := version.(*fs.RegularFile); ok {
 					total2 += size(v.Size)

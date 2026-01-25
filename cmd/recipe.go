@@ -17,6 +17,7 @@ var recipeCmd = &cobra.Command{
 		if len(args) > 0 {
 			return errors.New("no arguments are expected")
 		}
+		// Fun command: prints a fixed recipe.
 		fmt.Println(`
 Ingredients:
 
@@ -59,8 +60,7 @@ with the meat. Let the soup simmer gently for another 15 minutes. Divide the
 soup into bowls and serve.
 
 Recipe courtsey of https://www.ah.nl/allerhande/recept/R-R1193583/erwtensoep.
-Translation by ChatGPT 4o.
-`)
+Translation by ChatGPT 4o.`)
 
 		return nil
 	},

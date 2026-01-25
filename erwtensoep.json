@@ -1,0 +1,15 @@
+{
+  "archive-dir": "/path/to/archive",
+  "storage-backend": "local",
+  "merge": {
+    "min-size": 0,
+    "max-size": 9223372036854775807,
+    "sb-write-threshold": 1073741824
+  },
+  "restore": {
+    "output-dir": "/tmp/restore"
+  },
+  "verify": {
+    "shallow": true
+  }
+}

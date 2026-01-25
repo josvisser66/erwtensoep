@@ -1,53 +1,51 @@
 package fs
 
 import (
-	"bytes"
 	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
+	"josvisser.nl/erwtensoep/internal/storage"
 	"josvisser.nl/erwtensoep/internal/utils"
-	"os"
-	"path"
 	"path/filepath"
 )
 
-func readUnzipUnmarshal(path string, any interface{}) error {
-	b, err := os.ReadFile(path)
+// readUnzipUnmarshal reads a gzip-compressed JSON blob and decodes it into any.
+func readUnzipUnmarshal(backend storage.Backend, path string, any interface{}) error {
+	fin, err := backend.GetBlob(path)
 	if err != nil {
 		return err
 	}
+	defer fin.Close()
 
-	rdr, err := gzip.NewReader(bytes.NewBuffer(b))
+	rdr, err := gzip.NewReader(fin)
 	if err != nil {
 		return err
 	}
+	defer rdr.Close()
 
-	b, err = io.ReadAll(rdr)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(b, any)
+	return json.NewDecoder(rdr).Decode(any)
 }
 
 func RebuildSuperblock(options *Options) error {
 	sw := utils.NewStopwatch("Rebuilding the super block")
 	defer sw.Stop()
 
+	var err error
+	options.ArchiveDir, err = filepath.Abs(options.ArchiveDir)
+	if err != nil {
+		return err
+	}
+	ensureStorage(options)
 	sb := newSuperblock(options)
-	sb.fix(path.Join(options.ArchiveDir, "rebuilt_superblock.json"))
+	sb.fix("rebuilt_superblock.json")
 
 	n := 0
+	// Rebuild the block list by scanning stored blobs.
 	fmt.Println("Parsing blobs")
-	if err := filepath.Walk(sb.blobsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return err
-		}
-
+	if err := sb.storage.ListBlobs("blobs/", func(path string) error {
 		blob := &Blob{}
-		if err = readUnzipUnmarshal(path, blob); err != nil {
+		if err := readUnzipUnmarshal(sb.storage, path, blob); err != nil {
 			return err
 		}
 		// Maybe parse blob.Size into blob.size?
@@ -56,12 +54,10 @@ func RebuildSuperblock(options *Options) error {
 			if _, ok := sb.Blocks[blockID]; ok {
 				continue
 			}
-			fname, err := filename(sb.blocksDir, blockID)
-			if err != nil {
-				return err
-			}
+			key := blobKey(sb.blocksDir, blockID)
+			// Extract original block size from the gzip extra field.
 			size, err := func() (uint32, error) {
-				fin, err := os.Open(fname)
+				fin, err := sb.storage.GetBlob(key)
 				if err != nil {
 					return 0, err
 				}
@@ -72,6 +68,9 @@ func RebuildSuperblock(options *Options) error {
 				}
 				return binary.LittleEndian.Uint32(rdr.Extra), nil
 			}()
+			if err != nil {
+				return err
+			}
 			sb.Blocks[blockID] = &Block{blockID, size, nil}
 		}
 
@@ -85,13 +84,11 @@ func RebuildSuperblock(options *Options) error {
 	}
 
 	n = 0
+	// Rebuild entries by reading each stored entry version.
 	fmt.Println("\nParsing entries")
-	if err := filepath.Walk(sb.entriesDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return err
-		}
+	if err := sb.storage.ListBlobs("entries/", func(path string) error {
 		obj := make(map[string]interface{})
-		if err = readUnzipUnmarshal(path, &obj); err != nil {
+		if err := readUnzipUnmarshal(sb.storage, path, &obj); err != nil {
 			return err
 		}
 		var e Entry

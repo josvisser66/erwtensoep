@@ -46,6 +46,7 @@ var mergeCmd = &cobra.Command{
 		}
 
 		if totalChanges > 0 {
+			// Persist only when there were changes to avoid unnecessary rewrites.
 			if err := sb.Write(); err != nil {
 				// The on disk block cache is tainted but the on-disk superblock
 				// file does not reflect this. Time for garbage collection :-)

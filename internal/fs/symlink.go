@@ -36,6 +36,7 @@ func (sl *Symlink) hash() string {
 	h.Write([]byte("symlink"))
 	h.Write([]byte(sl.Path))
 	sl.FileStats.hash(h)
+	// Include target so different symlink destinations are distinct versions.
 	h.Write([]byte(sl.Target))
 
 	return fmt.Sprintf("%016x", h.Sum64())

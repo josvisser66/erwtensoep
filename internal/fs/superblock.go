@@ -1,18 +1,21 @@
 package fs
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"josvisser.nl/erwtensoep/internal/utils"
+	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"josvisser.nl/erwtensoep/internal/storage"
+	"josvisser.nl/erwtensoep/internal/utils"
 )
 
 type Entry interface {
@@ -34,6 +37,7 @@ type Superblock struct {
 	srcDir       string
 	sbFile       string
 	readFromDisk bool
+	storage      storage.Backend
 
 	blocksDir  string
 	entriesDir string
@@ -53,42 +57,39 @@ func (sb *Superblock) Write() error {
 		return nil
 	}
 	if sb.readFromDisk {
-		if err := os.Rename(sb.sbFile, fmt.Sprintf("%s.bak", sb.sbFile)); err != nil {
-			return err
+		// Keep a backup of the previous superblock for manual recovery.
+		if fin, err := sb.storage.GetBlob(sb.sbFile); err == nil {
+			defer fin.Close()
+			if data, err := io.ReadAll(fin); err == nil {
+				_ = sb.storage.PutBlob(fmt.Sprintf("%s.bak", sb.sbFile), data)
+			}
 		}
 	}
 	sb.Generation++
 	sb.LastUpdate = time.Now()
-	fout, err := os.Create(sb.sbFile)
-	if err != nil {
+	var buf bytes.Buffer
+	wr := gzip.NewWriter(&buf)
+	encoder := json.NewEncoder(wr)
+	if err := encoder.Encode(sb); err != nil {
+		_ = wr.Close()
 		return err
 	}
-	defer fout.Close()
-	wr := gzip.NewWriter(fout)
-	defer wr.Close()
-	encoder := json.NewEncoder(wr)
-	encoder.Encode(sb)
+	if err := wr.Close(); err != nil {
+		return err
+	}
+	if err := sb.storage.PutBlob(sb.sbFile, buf.Bytes()); err != nil {
+		return err
+	}
 	sb.bytesWritten = 0
 	return nil
 }
 
 func (sb *Superblock) maybeWrite() error {
+	// Periodically persist the superblock based on accumulated bytes written.
 	if sb.bytesWritten >= uint64(sb.options.SuperblockWriteThreshold) {
 		return sb.Write()
 	}
 	return nil
-}
-
-func mkdir(save *string, archiveDir, subDir string) (err error) {
-	*save = path.Join(archiveDir, subDir)
-	_, err = os.Stat(*save)
-	if err == nil {
-		return
-	}
-	if os.IsNotExist(err) {
-		return os.MkdirAll(*save, 0700)
-	}
-	return err
 }
 
 func newSuperblock(options *Options) *Superblock {
@@ -100,6 +101,11 @@ func newSuperblock(options *Options) *Superblock {
 		Blobs:      make(map[string]*Blob),
 		Blocks:     make(map[string]*Block),
 		LastUpdate: time.Time{},
+		storage:    options.Storage,
+		sbFile:     "superblock.json.gz",
+		blocksDir:  "blocks",
+		entriesDir: "entries",
+		blobsDir:   "blobs",
 	}
 }
 
@@ -130,15 +136,10 @@ func (sb *Superblock) fix(sbFile string) (err error) {
 	}
 
 	sb.sbFile = sbFile
-
-	// Makes sure that the metadata directories exists.
-	if err = mkdir(&sb.blocksDir, sb.options.ArchiveDir, "blocks"); err != nil {
-		return
-	}
-	if err = mkdir(&sb.entriesDir, sb.options.ArchiveDir, "entries"); err != nil {
-		return
-	}
-	return mkdir(&sb.blobsDir, sb.options.ArchiveDir, "blobs")
+	sb.blocksDir = "blocks"
+	sb.entriesDir = "entries"
+	sb.blobsDir = "blobs"
+	return nil
 }
 
 func GetSuperblock(options *Options) (sb *Superblock, err error) {
@@ -153,28 +154,32 @@ func GetSuperblock(options *Options) (sb *Superblock, err error) {
 	if err != nil {
 		return nil, err
 	}
-	sbFile := path.Join(options.ArchiveDir, "superblock.json.gz")
-	var fin *os.File
-	if fin, err = os.Open(sbFile); err != nil {
+	ensureStorage(options)
+	sbFile := "superblock.json.gz"
+	var fin io.ReadCloser
+	if fin, err = options.Storage.GetBlob(sbFile); err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("Creating new super block")
+			fmt.Println("Creating new super block in", options.ArchiveDir)
 			sb = newSuperblock(options)
 		} else {
 			return nil, err
 		}
 	} else {
+		defer fin.Close()
 		var rdr *gzip.Reader
 
 		rdr, err = gzip.NewReader(fin)
 		if err != nil {
 			return nil, err
 		}
+		defer rdr.Close()
 		if err = json.NewDecoder(rdr).Decode(&sb); err != nil {
 			return nil, err
 		}
 
 		sb.readFromDisk = true
 		sb.options = options
+		sb.storage = options.Storage
 	}
 
 	return sb, sb.fix(sbFile)
@@ -193,24 +198,23 @@ func (sb *Superblock) dataWrite(baseDir, hash string, data []byte) error {
 		sb.totalBytesWritten += uint64(len(data))
 		return nil
 	}
-	fname, err := filename(baseDir, hash)
-	if err != nil {
-		return err
-	}
-	fout, err := os.OpenFile(fname, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	defer fout.Close()
-	gzipWriter := gzip.NewWriter(fout)
+	key := blobKey(baseDir, hash)
+	var buf bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buf)
+	// Store original length in the gzip extra field to avoid full decompression for size.
 	gzipWriter.Extra = binary.LittleEndian.AppendUint32(gzipWriter.Extra, uint32(len(data)))
-	defer gzipWriter.Close()
 	n, err := gzipWriter.Write(data)
 	if err != nil {
 		return err
 	}
 	if n != len(data) {
 		return fmt.Errorf("unexpected number of bytes written: %d, expected %d", n, len(data))
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return err
+	}
+	if err := sb.storage.PutBlob(key, buf.Bytes()); err != nil {
+		return err
 	}
 	sb.bytesWritten += uint64(len(data))
 	sb.totalBytesWritten += uint64(len(data))
