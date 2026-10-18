@@ -40,6 +40,20 @@ func (b *MemoryBackend) GetBlob(key string) (io.ReadCloser, error) {
 	return nil, pathNotExist("get", key)
 }
 
+func (b *MemoryBackend) BlobSize(key string) (int64, error) {
+	orig := key
+	key, err := cleanRelPath(key)
+	if err != nil {
+		return 0, pathInvalid("stat", orig)
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if entry, ok := b.files[key]; ok {
+		return int64(len(entry.data)), nil
+	}
+	return 0, pathNotExist("stat", key)
+}
+
 func (b *MemoryBackend) PutBlob(key string, data []byte) error {
 	orig := key
 	key, err := cleanRelPath(key)

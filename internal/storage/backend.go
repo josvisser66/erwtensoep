@@ -1,6 +1,9 @@
 package storage
 
-import "io"
+import (
+	"errors"
+	"io"
+)
 
 // Backend defines the minimal operations needed to store and retrieve archive data.
 // All keys are backend-relative and opaque to callers.
@@ -13,4 +16,18 @@ type Backend interface {
 	DeleteBlob(key string) error
 	// ListBlobs enumerates all blob keys with the given prefix.
 	ListBlobs(prefix string, fn func(key string) error) error
+}
+
+// BlobSize returns the stored byte length of an object. Backends may implement
+// BlobSize(string) (int64, error) to avoid reading the object's contents.
+func BlobSize(b Backend, key string) (int64, error) {
+	if sizer, ok := b.(interface{ BlobSize(string) (int64, error) }); ok {
+		return sizer.BlobSize(key)
+	}
+	r, err := b.GetBlob(key)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(io.Discard, r)
+	return n, errors.Join(err, r.Close())
 }

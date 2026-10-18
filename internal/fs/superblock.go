@@ -124,14 +124,21 @@ func (sb *Superblock) fix(sbFile string) (err error) {
 	}
 
 	// Fix the blob size cache and the block back pointers to the blobs they are in.
-	for _, blob := range sb.Blobs {
+	for blobID, blob := range sb.Blobs {
+		if blob == nil {
+			return fmt.Errorf("missing metadata for blob %s", blobID)
+		}
 		blob.size, err = strconv.ParseInt(blob.Size, 10, 64)
 		if err != nil {
 			return
 		}
 
 		for _, blockID := range blob.Blocks {
-			sb.Blocks[blockID].blobs = append(sb.Blocks[blockID].blobs, blob)
+			block := sb.Blocks[blockID]
+			if block == nil {
+				return fmt.Errorf("blob %s references missing block %s", blobID, blockID)
+			}
+			block.blobs = append(block.blobs, blob)
 		}
 	}
 

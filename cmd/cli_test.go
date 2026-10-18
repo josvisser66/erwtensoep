@@ -252,7 +252,7 @@ func TestShellLoopAndHelp(t *testing.T) {
 	if err := s.run(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out.String(), "erwtensoep:/ erwtensoep:/dir ") || !strings.Contains(out.String(), "note.txt\nsub\n") || strings.Contains(out.String(), "alpha\n") {
+	if !strings.HasPrefix(out.String(), "erwtensoep:/ erwtensoep:/dir/ ") || !strings.Contains(out.String(), "note.txt\nsub\n") || strings.Contains(out.String(), "alpha\n") {
 		t.Fatalf("shell output: %q", out.String())
 	}
 	if strings.Count(errs.String(), "\n") != 3 {

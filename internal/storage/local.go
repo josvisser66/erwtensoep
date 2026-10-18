@@ -25,6 +25,21 @@ func (b *LocalBackend) GetBlob(key string) (io.ReadCloser, error) {
 	return os.Open(full)
 }
 
+func (b *LocalBackend) BlobSize(key string) (int64, error) {
+	full, err := b.keyPath(key)
+	if err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, pathInvalid("stat", key)
+	}
+	return info.Size(), nil
+}
+
 func (b *LocalBackend) PutBlob(key string, data []byte) error {
 	full, err := b.keyPath(key)
 	if err != nil {

@@ -12,7 +12,7 @@ func init() {
 
 var recipeCmd = &cobra.Command{
 	Use:   "recipe",
-	Short: "Gives a good recipe for erwetensoep",
+	Short: "Gives a good recipe for erwtensoep",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			return errors.New("no arguments are expected")

@@ -182,7 +182,7 @@ func TestLineEditorListsMatchesAndKeepsHistoryAcrossDirectories(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !strings.Contains(out.String(), "cat\r\ncd\r\n") || !strings.Contains(out.String(), "erwtensoep:/dir ") {
+	if !strings.Contains(out.String(), "cat\r\ncd\r\n") || !strings.Contains(out.String(), "erwtensoep:/dir/ ") {
 		t.Fatalf("missing matches or updated prompt: %q", out.String())
 	}
 }
@@ -207,7 +207,7 @@ func TestLineEditorDoesNotConsumePagerKeys(t *testing.T) {
 	}
 }
 
-func TestLineEditorHistoryBoundedAndSessionLocal(t *testing.T) {
+func TestLineEditorHistoryBoundedWithoutPersistence(t *testing.T) {
 	s, _ := testArchiveShell(t)
 	var input strings.Builder
 	for i := 0; i < 105; i++ {

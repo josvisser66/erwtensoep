@@ -2,13 +2,45 @@
 
 Build with `make build` and run tests with `make test`.
 
+## Archive statistics
+
+```sh
+erwtensoep --archive-dir /path/to/archive stats
+```
+
+`stats` shows how sharing and compression reduce the storage needed for **all
+saved regular-file versions**, including older versions:
+
+1. **Logical file data** counts every file version's original size separately.
+2. **After whole-file sharing** counts each distinct file content (blob) once.
+   Identical files and unchanged contents across versions share a blob.
+3. **After block sharing** counts each referenced block once. Different file
+   contents can share blocks, and a single file can contain repeated blocks.
+4. **Stored blocks (gzip)** measures the actual compressed block object sizes,
+   including gzip headers and trailers. Local archives use file sizes without
+   reading or decompressing the block contents.
+
+Savings are shown in bytes and percentages with the baseline named on each line.
+Whole-file and additional block savings combine into the total sharing subtotal;
+compression applies to the unique blocks that remain. Overall savings compares
+stored blocks with logical data. Small or incompressible blocks may expand under
+gzip; this is reported as an increase. Empty archives have no size ratio.
+
+Block reuse counts include every occurrence in every saved file version.
+The report separately counts blocks shared between **distinct file paths**;
+repeated blocks or multiple versions of a single path alone do not qualify.
+Symlinks contribute to version counts but not file-data sizes. Metadata,
+superblock backups, unreferenced objects, and filesystem allocation overhead
+are excluded from the storage breakdown, so it is not a total disk-usage report.
+Unreferenced blobs and blocks present in the index are counted separately.
+
 ## Browsing an archive
 
 ```sh
 erwtensoep --archive-dir /path/to/archive cli
 ```
 
-The interactive prompt is `erwtensoep:<pwd>`, starting at `erwtensoep:/`.
+The interactive prompt is `erwtensoep:<pwd>/`, starting at `erwtensoep:/`.
 The shell shows the latest version of each archived path and infers directories
 from those paths. Empty directories and original directory metadata are not
 stored. Browsing does not modify the archive or extract files onto disk.
@@ -19,20 +51,29 @@ it. For multiple matches, Tab extends their shared prefix or lists the choices.
 Completion handles quoted/escaped names, relative and absolute paths, and
 symlinked directories. `cd` offers directories only; hidden names require a dot.
 
-**Up/Down** browse the last 100 commands in the current session. Down past the
+**Up/Down** browse the last 100 commands across CLI sessions. Down past the
 newest command restores the line you were typing. Recalled commands are editable
 with Left/Right, Backspace, and the usual terminal editing keys. Blank lines and
-consecutive duplicates are omitted. History is kept in memory for this session.
-Piped input continues to use plain command lines without interactive editing.
+consecutive duplicates are omitted. Interactive commands are saved as they are
+entered in `~/.erwtensoep_history`, shared across archives, with owner-only file
+permissions. The file contains a JSON array of commands, oldest first. New
+commands from overlapping sessions are merged when saving; the file is replaced
+atomically and limited to 100 entries. A sibling `.erwtensoep_history.lock` file
+coordinates writes. Delete the history file while CLI sessions are closed to
+clear saved history.
+
+History-file errors produce a warning while in-memory history remains usable;
+pending commands are retried on the next command and on exit. Piped input uses
+plain command lines without interactive editing and is not recorded in history.
 
 ```text
 erwtensoep:/ ls -lah
 erwtensoep:/ cd "my documents"
-erwtensoep:/my documents ls -R
-erwtensoep:/my documents cat -n notes.txt
-erwtensoep:/my documents more -n 20 notes.txt
-erwtensoep:/my documents du -sh .
-erwtensoep:/my documents cd -
+erwtensoep:/my documents/ ls -R
+erwtensoep:/my documents/ cat -n notes.txt
+erwtensoep:/my documents/ more -n 20 notes.txt
+erwtensoep:/my documents/ du -sh .
+erwtensoep:/my documents/ cd -
 erwtensoep:/ exit
 ```
 

@@ -41,6 +41,7 @@ type archiveShell struct {
 	out, errOut io.Writer
 	terminal    *os.File
 	editor      *term.Terminal
+	history     *commandHistory
 	paging      bool
 	pageLines   int
 }
@@ -65,8 +66,17 @@ var errShellExit = errors.New("exit shell")
 var errShellHelp = errors.New("help displayed")
 
 func (s *archiveShell) run() error {
+	if s.terminal != nil {
+		if s.history == nil {
+			s.loadHistory(defaultHistoryPath)
+		}
+		defer s.saveHistory()
+	}
 	for {
 		line, readErr := s.readCommand()
+		// History is recorded by the editor, but saved after raw mode has been
+		// restored, so any filesystem warning can be printed normally.
+		s.saveHistory()
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return readErr
 		}
@@ -95,8 +105,9 @@ const shellHelp = `Commands (use COMMAND --help for flags):
   exit, quit             Leave the shell (EOF also exits)
 
 Tab completes commands and archive paths, extending a shared prefix or listing
-matches. Up/Down recall the last 100 commands in this session and restore the
-unfinished line when returning past the newest command.
+matches. Up/Down recall the last 100 commands across sessions and restore the
+unfinished line when returning past the newest command. Interactive history is
+saved in ~/.erwtensoep_history; piped commands are not recorded.
 
 Paths are archive-relative; / is the archive root. Quotes, backslash escapes,
 and unquoted *, ?, [...] globs are supported. Pipes, redirects, variables,

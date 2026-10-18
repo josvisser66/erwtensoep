@@ -28,20 +28,17 @@ func (rw shellTerminalIO) Read(p []byte) (int, error) {
 	return rw.Reader.Read(p)
 }
 
-// Keep the terminal's bounded history, omitting blank and repeated entries.
-type commandHistory struct{ term.History }
-
-func (h commandHistory) Add(line string) {
-	if strings.TrimSpace(line) == "" || (h.Len() > 0 && h.At(0) == line) {
-		return
-	}
-	h.History.Add(line)
+func (s *archiveShell) prompt() string {
+	return "erwtensoep:" + strings.TrimSuffix(s.cwd, "/") + "/ "
 }
 
 func (s *archiveShell) lineEditor() *term.Terminal {
 	if s.editor == nil {
 		s.editor = term.NewTerminal(shellTerminalIO{s.in, s.out}, "")
-		s.editor.History = commandHistory{s.editor.History}
+		if s.history == nil {
+			s.history = &commandHistory{}
+		}
+		s.editor.History = s.history
 		s.editor.AutoCompleteCallback = func(line string, pos int, key rune) (string, int, bool) {
 			if key != '\t' {
 				return "", 0, false
@@ -53,13 +50,13 @@ func (s *archiveShell) lineEditor() *term.Terminal {
 			return completed, cursor, true
 		}
 	}
-	s.editor.SetPrompt("erwtensoep:" + s.cwd + " ")
+	s.editor.SetPrompt(s.prompt())
 	return s.editor
 }
 
 func (s *archiveShell) readCommand() (line string, err error) {
 	if s.terminal == nil {
-		if _, err = fmt.Fprintf(s.out, "erwtensoep:%s ", s.cwd); err != nil {
+		if _, err = fmt.Fprint(s.out, s.prompt()); err != nil {
 			return "", err
 		}
 		return s.in.ReadString('\n')

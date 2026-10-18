@@ -118,4 +118,39 @@ func TestIntegrationBackupLocalArchive(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("cli modified archive metadata: %v", err)
 	}
+
+	stdout.Reset()
+	stderr.Reset()
+	stats := exec.Command(bin, "--archive-dir", archiveDir, "stats")
+	stats.Stdout, stats.Stderr = &stdout, &stderr
+	if err := stats.Run(); err != nil {
+		t.Fatalf("stats failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var storedBytes int64
+	if err := filepath.WalkDir(filepath.Join(archiveDir, "blocks"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err == nil {
+			storedBytes += info.Size()
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for label, want := range map[string]string{
+		"Logical file data:":                "9 B (9 bytes)",
+		"After whole-file sharing:":         "9 B (9 bytes)",
+		"After block sharing:":              "9 B (9 bytes)",
+		"Stored blocks (gzip):":             statsBytes(storedBytes),
+		"Blocks shared between file paths:": "0 of 2",
+		"Compression:":                      statsSavings(9, storedBytes, "unique block data"),
+	} {
+		assertStatsLine(t, stdout.String(), label, want)
+	}
+	after, err = os.ReadFile(sbPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("stats modified archive metadata: %v", err)
+	}
 }
