@@ -2,6 +2,9 @@ package fs
 
 import (
 	"errors"
+	"fmt"
+	"maps"
+	"os"
 	"path/filepath"
 	"sort"
 )
@@ -34,71 +37,95 @@ func (sb *Superblock) Remove(patterns []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	return sb.RemovePaths(targets)
+}
 
-	if len(targets) == 0 {
-		return 0, nil
-	}
-
-	for _, path := range targets {
-		versions := sb.Entries[path]
+// RemovePaths removes all versions of exact archive paths, without interpreting
+// glob characters. Missing paths and duplicate operands are ignored.
+// The updated index is saved before deleting unreferenced objects, so a failed
+// index write does not first destroy the data it still references.
+func (sb *Superblock) RemovePaths(paths []string) (int, error) {
+	entries := maps.Clone(sb.Entries)
+	var garbage []string
+	removed := 0
+	for _, name := range paths {
+		versions, ok := entries[name]
+		if !ok {
+			continue
+		}
 		for id := range versions {
-			if !sb.options.DryRun {
-				_ = sb.storage.DeleteBlob(blobKey(sb.entriesDir, id))
-			}
+			garbage = append(garbage, blobKey(sb.entriesDir, id))
 		}
-		delete(sb.Entries, path)
+		delete(entries, name)
+		removed++
+	}
+	if removed == 0 || sb.options.DryRun {
+		return removed, nil
 	}
 
-	blobRefs := make(map[string]struct{})
-	blockRefs := make(map[string]struct{})
-
-	for _, versions := range sb.Entries {
-		for _, v := range versions {
+	blobRefs := make(map[string]bool)
+	blockRefs := make(map[string]bool)
+	entryRefs := make(map[string]bool)
+	for _, versions := range entries {
+		for id, v := range versions {
+			entryRefs[blobKey(sb.entriesDir, id)] = true
 			if rf, ok := v.(*RegularFile); ok {
-				blobRefs[rf.BlobID] = struct{}{}
+				blobRefs[rf.BlobID] = true
 			}
 		}
 	}
-
 	for blobID := range blobRefs {
-		if blob, ok := sb.Blobs[blobID]; ok {
-			for _, blockID := range blob.Blocks {
-				blockRefs[blockID] = struct{}{}
-			}
+		blob := sb.Blobs[blobID]
+		if blob == nil {
+			return 0, fmt.Errorf("cannot remove: remaining entry references missing blob %s", blobID)
 		}
-	}
-
-	for blobID, blob := range sb.Blobs {
-		if _, ok := blobRefs[blobID]; ok {
-			continue
-		}
-		if !sb.options.DryRun {
-			_ = sb.storage.DeleteBlob(blobKey(sb.blobsDir, blobID))
-		}
-		delete(sb.Blobs, blobID)
 		for _, blockID := range blob.Blocks {
-			if _, ok := blockRefs[blockID]; !ok {
-				if !sb.options.DryRun {
-					_ = sb.storage.DeleteBlob(blobKey(sb.blocksDir, blockID))
-				}
-				delete(sb.Blocks, blockID)
+			if sb.Blocks[blockID] == nil {
+				return 0, fmt.Errorf("cannot remove: remaining blob references missing block %s", blockID)
 			}
+			blockRefs[blockID] = true
+		}
+	}
+	blobs := maps.Clone(sb.Blobs)
+	blocks := maps.Clone(sb.Blocks)
+	for id := range blobs {
+		if !blobRefs[id] {
+			garbage = append(garbage, blobKey(sb.blobsDir, id))
+			delete(blobs, id)
+		}
+	}
+	for id := range blocks {
+		if !blockRefs[id] {
+			garbage = append(garbage, blobKey(sb.blocksDir, id))
+			delete(blocks, id)
 		}
 	}
 
-	for blockID := range sb.Blocks {
-		if _, ok := blockRefs[blockID]; ok {
+	oldEntries, oldBlobs, oldBlocks := sb.Entries, sb.Blobs, sb.Blocks
+	oldGeneration, oldUpdate := sb.Generation, sb.LastUpdate
+	sb.Entries, sb.Blobs, sb.Blocks = entries, blobs, blocks
+	if err := sb.Write(); err != nil {
+		sb.Entries, sb.Blobs, sb.Blocks = oldEntries, oldBlobs, oldBlocks
+		sb.Generation, sb.LastUpdate = oldGeneration, oldUpdate
+		return 0, err
+	}
+	for _, block := range blocks {
+		block.blobs = nil
+	}
+	for _, blob := range blobs {
+		for _, blockID := range blob.Blocks {
+			blocks[blockID].blobs = append(blocks[blockID].blobs, blob)
+		}
+	}
+
+	var errs []error
+	for _, key := range garbage {
+		if entryRefs[key] {
 			continue
 		}
-		if !sb.options.DryRun {
-			_ = sb.storage.DeleteBlob(blobKey(sb.blocksDir, blockID))
+		if err := sb.storage.DeleteBlob(key); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("removed entries, but could not delete unused object %s: %w", key, err))
 		}
-		delete(sb.Blocks, blockID)
 	}
-
-	if err := sb.Write(); err != nil {
-		return len(targets), err
-	}
-
-	return len(targets), nil
+	return removed, errors.Join(errs...)
 }

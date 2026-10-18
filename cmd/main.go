@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/spf13/cobra"
 	"josvisser.nl/erwtensoep/internal/storage"
+	"os"
 	"strings"
 )
 
@@ -38,5 +39,7 @@ func init() {
 
 func main() {
 	// Execute the CLI root command.
-	rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }

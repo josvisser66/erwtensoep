@@ -79,7 +79,7 @@ func (s *archiveShell) readCommand() (line string, err error) {
 	return line, err
 }
 
-var shellCommands = []string{"cat", "cd", "du", "exit", "help", "ls", "more", "pwd", "quit"}
+var shellCommands = []string{"cat", "cd", "du", "exit", "help", "ls", "more", "pwd", "quit", "rm"}
 
 // complete replaces the word at the cursor, preserving later arguments. It
 // returns escaped display candidates when the prefix is ambiguous.
@@ -104,7 +104,7 @@ func (s *archiveShell) complete(line string, pos int) (string, int, []string) {
 	} else {
 		command := words[0].text
 		switch command {
-		case "cd", "ls", "cat", "more", "du":
+		case "cd", "ls", "cat", "more", "du", "rm":
 			endOptions := false
 			for _, arg := range words[1:index] {
 				endOptions = endOptions || arg.text == "--"
@@ -119,7 +119,7 @@ func (s *archiveShell) complete(line string, pos int) (string, int, []string) {
 					return line, pos, nil
 				}
 			}
-			matches = s.completePath(word.text, command == "cd")
+			matches = s.completePath(word.text, command == "cd", command != "rm")
 			if !endOptions {
 				for i, match := range matches {
 					if strings.HasPrefix(match, "-") || (command == "more" && strings.HasPrefix(match, "+")) {
@@ -167,7 +167,7 @@ func (s *archiveShell) complete(line string, pos int) (string, int, []string) {
 	return line[:word.start] + replacement + suffix, cursor, nil
 }
 
-func (s *archiveShell) completePath(prefix string, directoriesOnly bool) []string {
+func (s *archiveShell) completePath(prefix string, directoriesOnly, followLinks bool) []string {
 	slash := strings.LastIndex(prefix, "/")
 	parent, base := prefix[:slash+1], prefix[slash+1:]
 	lookup := parent
@@ -193,8 +193,10 @@ func (s *archiveShell) completePath(prefix string, directoriesOnly bool) []strin
 			continue
 		}
 		isDir := child.isDir()
-		if resolved, err := s.resolve(parent+name, true); err == nil {
-			isDir = resolved.isDir()
+		if followLinks {
+			if resolved, err := s.resolve(parent+name, true); err == nil {
+				isDir = resolved.isDir()
+			}
 		}
 		if directoriesOnly && !isDir {
 			continue

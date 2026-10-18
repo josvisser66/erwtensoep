@@ -21,7 +21,7 @@ func init() { rootCmd.AddCommand(cliCmd) }
 var cliCmd = &cobra.Command{
 	Use:   "cli",
 	Short: "Browse an archive with an interactive Unix-style shell",
-	Long:  "Browse the latest archived versions using cd, pwd, ls, cat, more, and du.\nPaths and symbolic links are resolved inside the archive. Type help for commands.",
+	Long:  "Browse the latest archived versions using cd, pwd, ls, cat, more, and du.\nUse rm to remove archived paths and all their saved versions.\nPaths and symbolic links are resolved inside the archive. Type help for commands.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sb, err := fs.GetSuperblock(&options)
@@ -101,6 +101,7 @@ const shellHelp = `Commands (use COMMAND --help for flags):
   cat [-nbsET] FILE...    Print file contents
   more [-s] [-n LINES] [+LINE] FILE...  Page through file contents
   du [-ahskbmc] [-d DEPTH] [PATH...]   Show uncompressed sizes
+  rm [-rRfiv] PATH...    Remove paths and all their saved versions
   help [COMMAND]         Show help
   exit, quit             Leave the shell (EOF also exits)
 
@@ -115,7 +116,10 @@ and host commands are not interpreted. Only the latest file versions appear.
 Directories are inferred; empty directories and directory metadata are absent.
 du counts logical file bytes, including hidden files, without deduplicating.
 more uses Space for a page, Enter for a line, and q to stop; redirected output
-is printed without paging. All commands leave the archive unchanged.
+is printed without paging. rm permanently removes all versions of selected paths;
+-r/-R includes directory contents, -i asks before each path, -f skips missing
+paths and disables prompts, and -v lists removed paths. Other commands leave the
+archive unchanged. Shared file data is retained while another entry needs it.
 `
 
 func (s *archiveShell) execute(line string) error {
@@ -154,6 +158,8 @@ func (s *archiveShell) execute(line string) error {
 		err = s.more(args)
 	case "du":
 		err = s.du(args)
+	case "rm":
+		err = s.rm(args)
 	default:
 		err = fmt.Errorf("unknown command; type help for available commands")
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -11,6 +12,8 @@ import (
 
 	"josvisser.nl/erwtensoep/internal/fs"
 )
+
+var errArchiveNotExist = errors.New("no such file or directory")
 
 type archiveNode struct {
 	path     string
@@ -108,7 +111,7 @@ func (s *archiveShell) resolve(name string, followFinal bool) (*archiveNode, err
 		}
 		n := s.nodes[path.Join(current.path, part)]
 		if n == nil {
-			return nil, fmt.Errorf("%s: no such file or directory", name)
+			return nil, fmt.Errorf("%s: %w", name, errArchiveNotExist)
 		}
 		if link, ok := n.entry.(*fs.Symlink); ok && (followFinal || len(parts) > 0) {
 			links++

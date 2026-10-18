@@ -17,6 +17,15 @@ func TestShellCompletion(t *testing.T) {
 	s, _ := testArchiveShell(t)
 	for _, tc := range []struct{ input, want string }{
 		{"ca", "cat "},
+		{"r", "rm "},
+		{"help r", "help rm "},
+		{"rm al", "rm alpha.txt "},
+		{"rm -r di", "rm -r dir/"},
+		{"rm li", "rm link "},
+		{"rm link/no", "rm link/note.txt "},
+		{"rm bro", "rm broken "},
+		{"rm -- -da", "rm -- -dash "},
+		{`rm "space dir/a`, `rm "space dir/a b.txt" `},
 		{"  mo", "  more "},
 		{"help pw", "help pwd "},
 		{"cat al", "cat alpha.txt "},

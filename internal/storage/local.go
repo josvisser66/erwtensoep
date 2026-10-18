@@ -1,11 +1,13 @@
 package storage
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type LocalBackend struct {
@@ -48,7 +50,21 @@ func (b *LocalBackend) PutBlob(key string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(full, data, 0600)
+	// Replace objects atomically, including the superblock. A failed write must
+	// not truncate the existing index before a repair or removal can roll back.
+	f, err := os.CreateTemp(filepath.Dir(full), ".erwtensoep-write-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(data)
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), full)
 }
 
 func (b *LocalBackend) DeleteBlob(key string) error {
@@ -56,7 +72,27 @@ func (b *LocalBackend) DeleteBlob(key string) error {
 	if err != nil {
 		return err
 	}
-	return os.Remove(full)
+	if err := os.Remove(full); err != nil {
+		return err
+	}
+	return b.pruneParents(full)
+}
+
+func (b *LocalBackend) pruneParents(full string) error {
+	rel, err := filepath.Rel(b.root, full)
+	if err != nil || !archiveSection(strings.Split(filepath.ToSlash(rel), "/")[0]) {
+		return err
+	}
+	for dir := filepath.Dir(full); dir != b.root; dir = filepath.Dir(dir) {
+		err := syscall.Rmdir(dir) // Only directories; never unlink a replacement file.
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			break
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return &os.PathError{Op: "prune", Path: dir, Err: err}
+		}
+	}
+	return nil
 }
 
 func (b *LocalBackend) ListBlobs(prefix string, fn func(key string) error) error {

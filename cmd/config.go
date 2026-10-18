@@ -29,6 +29,7 @@ type config struct {
 	Rm             *config `json:"rm"`
 	Restore        *config `json:"restore"`
 	Verify         *config `json:"verify"`
+	Fsck           *config `json:"fsck"`
 	Stats          *config `json:"stats"`
 	Rebuild        *config `json:"rebuild"`
 	Hello          *config `json:"hello"`
@@ -79,6 +80,8 @@ func applyConfig(cmd *cobra.Command) error {
 		applyConfigSection(cmd, cfg.Restore)
 	case "verify":
 		applyConfigSection(cmd, cfg.Verify)
+	case "fsck":
+		applyConfigSection(cmd, cfg.Fsck)
 	case "stats":
 		applyConfigSection(cmd, cfg.Stats)
 	case "rebuild":
@@ -163,6 +166,9 @@ func ensureArchiveDir(cmd *cobra.Command) error {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+	if cmd.Name() == "fsck" {
+		return fmt.Errorf("archive directory %q does not exist", options.ArchiveDir)
 	}
 
 	fmt.Fprintf(os.Stderr, "Archive directory %q does not exist. Create it? [y/N]: ", options.ArchiveDir)

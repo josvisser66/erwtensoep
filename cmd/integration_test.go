@@ -153,4 +153,87 @@ func TestIntegrationBackupLocalArchive(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("stats modified archive metadata: %v", err)
 	}
+
+	stdout.Reset()
+	stderr.Reset()
+	remove := exec.Command(bin, "--archive-dir", archiveDir, "cli")
+	remove.Stdin = strings.NewReader("rm -iv alpha.txt\nn\ncat alpha.txt\nrm -v alpha.txt\nls\nexit\n")
+	remove.Stdout, remove.Stderr = &stdout, &stderr
+	if err := remove.Run(); err != nil || stderr.Len() != 0 {
+		t.Fatalf("cli rm failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "[y/N]: ") || !strings.Contains(stdout.String(), "erwtensoep:/ alpha") ||
+		!strings.Contains(stdout.String(), "removed \"/alpha.txt\" (all saved versions)") {
+		t.Fatalf("unexpected removal output: %s", stdout.String())
+	}
+	if data, err := os.ReadFile(filepath.Join(srcDir, "alpha.txt")); err != nil || string(data) != "alpha" {
+		t.Fatalf("cli rm modified the source file: %v", err)
+	}
+
+	// Rebuilding from stored objects must not resurrect removed file versions.
+	rebuild = exec.Command(bin, "--archive-dir", archiveDir, "rebuild")
+	if out, err := rebuild.CombinedOutput(); err != nil {
+		t.Fatalf("rebuild after rm failed: %v\n%s", err, out)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	reopen := exec.Command(bin, "--archive-dir", archiveDir, "cli")
+	reopen.Stdin = strings.NewReader("ls\ncat beta.txt\ncat alpha.txt\nexit\n")
+	reopen.Stdout, reopen.Stderr = &stdout, &stderr
+	if err := reopen.Run(); err != nil {
+		t.Fatalf("cli reopen after rm failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "erwtensoep:/ beta.txt\n") || !strings.Contains(stdout.String(), "erwtensoep:/ beta") ||
+		!strings.Contains(stderr.String(), "alpha.txt: no such file or directory") {
+		t.Fatalf("removal did not persist: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+
+	check := exec.Command(bin, "--archive-dir", archiveDir, "fsck", "-n")
+	if out, err := check.CombinedOutput(); err != nil || !strings.Contains(string(out), "Archive is consistent") || strings.Contains(string(out), "Checking ") || strings.Contains(string(out), "Checked ") {
+		t.Fatalf("fsck healthy archive: %v\n%s", err, out)
+	}
+	for _, flag := range []string{"-v", "--verbose"} {
+		check = exec.Command(bin, "--archive-dir", archiveDir, "fsck", "-n", flag)
+		stdout.Reset()
+		stderr.Reset()
+		check.Stdout, check.Stderr = &stdout, &stderr
+		if err := check.Run(); err != nil || !strings.Contains(stdout.String(), "Archive is consistent") || !strings.Contains(stderr.String(), "Checked blocks:") || !strings.Contains(stderr.String(), "(100.0%)") {
+			t.Fatalf("fsck %s progress: %v\nstdout=%s stderr=%s", flag, err, stdout.String(), stderr.String())
+		}
+	}
+	emptyDir := filepath.Join(archiveDir, "blocks", "old", "empty")
+	if err := os.MkdirAll(emptyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	check = exec.Command(bin, "--archive-dir", archiveDir, "fsck", "-n")
+	if out, err := check.CombinedOutput(); err == nil || !strings.Contains(string(out), "[empty directory]") {
+		t.Fatalf("fsck should report unresolved discrepancies with a nonzero exit: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(emptyDir); err != nil {
+		t.Fatalf("check-only fsck changed directories: %v", err)
+	}
+	check = exec.Command(bin, "--archive-dir", archiveDir, "fsck", "-y")
+	if out, err := check.CombinedOutput(); err != nil || !strings.Contains(string(out), "Repair complete") {
+		t.Fatalf("fsck repair: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Dir(emptyDir)); !os.IsNotExist(err) {
+		t.Fatalf("fsck did not prune empty parents: %v", err)
+	}
+	check = exec.Command(bin, "--archive-dir", archiveDir, "fsck", "-n")
+	if out, err := check.CombinedOutput(); err != nil || !strings.Contains(string(out), "Archive is consistent") {
+		t.Fatalf("fsck repaired archive: %v\n%s", err, out)
+	}
+	check = exec.Command(bin, "--archive-dir", archiveDir, "fsck", "-ny")
+	if out, err := check.CombinedOutput(); err == nil || !strings.Contains(string(out), "none of the others") {
+		t.Fatalf("fsck accepted conflicting flags: %v\n%s", err, out)
+	}
+	missingArchive := filepath.Join(t.TempDir(), "missing")
+	check = exec.Command(bin, "--archive-dir", missingArchive, "fsck", "-n")
+	check.Stdin = strings.NewReader("yes\n")
+	if out, err := check.CombinedOutput(); err == nil || !strings.Contains(string(out), "does not exist") {
+		t.Fatalf("fsck accepted nonexistent archive: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(missingArchive); !os.IsNotExist(err) {
+		t.Fatal("check-only fsck created an archive directory")
+	}
 }

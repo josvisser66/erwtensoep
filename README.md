@@ -2,6 +2,67 @@
 
 Build with `make build` and run tests with `make test`.
 
+## Manuals
+
+- [User manual](docs/user-manual.md): setup, common tasks, configuration, every
+  subcommand, and the interactive shell.
+- [Technical manual](docs/technical-manual.md): repository structure, archive
+  format, implementation, storage, integrity checking, and development.
+
+## Checking and repairing an archive
+
+```sh
+erwtensoep --archive-dir /path/to/archive fsck       # Report, then ask to repair
+erwtensoep --archive-dir /path/to/archive fsck -n    # Check only; never write
+erwtensoep --archive-dir /path/to/archive fsck -nv   # Check only, with progress
+erwtensoep --archive-dir /path/to/archive fsck -y    # Report and apply all repairs
+```
+
+`fsck` reads the superblock and independently scans stored entries, blobs, and
+blocks. It fully decompresses objects to check gzip checksums and stored lengths,
+validates metadata and content hashes, and checks every file-to-blob and
+blob-to-block reference. It can inspect an archive whose superblock is missing,
+corrupt, or too inconsistent for ordinary commands to load. Checking large
+archives reads all block data; keep the archive idle throughout the check and
+repair. Add `-v` (or `--verbose`) to show scan phases, completed/total object
+counts, and percentage done per phase on stderr, with progress updates about
+every two seconds. The initial directory scan shows `counting...` until totals
+are known. The discrepancy report and repair prompt are shown regardless of
+verbosity.
+
+The report lists discrepancies and the proposed action for each. Unless `-y` is
+given, repairs require a `y` or `yes` response; declining or reaching EOF makes
+no changes. `-n` and `-y` cannot be combined. The command exits nonzero when
+discrepancies remain unrepaired or checking/repairing fails.
+
+Repairs use valid stored objects to rebuild the complete index:
+
+- Corrupt entries, blobs, and blocks are removed. A blob with a missing or
+  corrupt block is removed together with entries referring to it. Entries with
+  missing blobs are removed too. Other versions and shared blocks remain when
+  they are still valid and referenced.
+- Valid entries missing from the superblock are added. A missing on-disk entry
+  record is recreated from valid superblock metadata when its blob is intact;
+  corrupt on-disk entry records are discarded instead.
+- Blobs without surviving entries become files named `lost+found/<blob-hash>`.
+  Recovery entries use mode `0600`, unknown owner/group, and the recovery time.
+  A numeric suffix avoids overwriting an existing name. If `lost+found` itself
+  is an archived file or symlink, the checker reports that conflict and refuses
+  repair until it is resolved.
+- Blocks unused by any surviving blob, invalid objects in the storage layout,
+  and empty storage directories are removed. Filesystem symlinks in storage
+  directories are removed as links, never followed.
+
+Before repair, the previous index is saved as `superblock.json.gz.fsck.bak`.
+The repaired superblock is replaced atomically before unusable object files are
+deleted. I/O or permission errors abort checking rather than treating unreadable
+objects as corrupt. Repair failures are reported, and a changed superblock
+invalidates a pending repair plan.
+
+Ordinary archive deletion also prunes empty parent directories recursively,
+including empty `blocks`, `blobs`, and `entries` folders. The archive root is
+preserved, and storage folders are recreated automatically when needed.
+
 ## Archive statistics
 
 ```sh
@@ -44,6 +105,7 @@ The interactive prompt is `erwtensoep:<pwd>/`, starting at `erwtensoep:/`.
 The shell shows the latest version of each archived path and infers directories
 from those paths. Empty directories and original directory metadata are not
 stored. Browsing does not modify the archive or extract files onto disk.
+The `rm` command can remove archived paths and all their saved versions.
 
 In a terminal, **Tab** completes command names and archive paths. A unique file
 or command adds a trailing space; a directory adds `/` so you can continue into
@@ -85,6 +147,7 @@ erwtensoep:/ exit
 | `cat FILE...` | `-n` numbers lines; `-b` numbers nonempty lines; `-s` squeezes repeated empty lines; `-E` marks line endings; `-T` shows tabs. |
 | `more FILE...` | `-n N` or `-N` sets page length; `+N` starts at line N; `-s` squeezes repeated empty lines. Space advances a page, Enter advances a line, and `q` stops. Input or output redirected away from a terminal disables paging. |
 | `du [PATH...]` | `-s` summarizes; `-a` includes individual files; `-h` formats sizes; `-b` uses bytes; `-k` uses KiB (default); `-m` uses MiB; `-c` prints a grand total; `-d N` / `--max-depth N` limits displayed depth. |
+| `rm PATH...` | `-r` / `-R` / `--recursive` removes directories and their contents; `-f` / `--force` ignores missing paths and disables prompts; `-i` / `--interactive` asks before each archived path; `-v` / `--verbose` lists removed paths. The last `-f` or `-i` wins. |
 
 Use `help` or `help COMMAND` for details and long option names. Short flags can
 be combined, and `--` ends options for filenames beginning with `-`. `exit`,
@@ -101,6 +164,22 @@ files. It counts each archived pathname separately even when contents are shared
 counts symlink metadata without following the target, and assigns zero bytes to
 inferred directories. Numeric units round up after summing a directory's bytes.
 It does not measure the archive's compressed storage size.
+
+`rm` immediately removes **all saved versions** of the selected paths from the
+archive. Use `rm -i PATH...` to confirm each path first. It accepts relative or
+absolute archive paths, quotes, globs, and `--` for names beginning with `-`.
+Directories require `-r` or `-R`, which includes hidden descendants. Symlinks are
+removed themselves; recursive deletion does not follow symlinks within a
+directory. Intermediate symlinks in a path such as `link/file.txt` resolve inside
+the archive. A final symlink with a trailing slash is rejected; omit the slash
+to remove the link. Tab completion for `rm` leaves symlinks without a slash.
+
+The archive root and operands ending in `.` or `..` cannot be removed, even with
+`-f`. Shared contents and blocks remain stored while another saved file needs
+them. Listings and completion refresh after deletion; if the current inferred
+directory disappears, the prompt moves to its nearest surviving ancestor.
+Confirmation answers are not added to command history. Source files on the host
+filesystem are unaffected.
 
 The usual `--archive-dir` / `-a`, `--storage-backend`, and `~/.erwtensoep.json`
 configuration apply. A `cli` section can provide command-specific configuration.

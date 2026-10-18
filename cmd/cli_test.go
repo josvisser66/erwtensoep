@@ -263,7 +263,7 @@ func TestShellLoopAndHelp(t *testing.T) {
 	if err := s.run(); err != nil || !strings.Contains(out.String(), "/dir\n") {
 		t.Fatalf("EOF: output %q, err %v", out.String(), err)
 	}
-	for _, name := range []string{"cd", "pwd", "ls", "cat", "more", "du"} {
+	for _, name := range []string{"cd", "pwd", "ls", "cat", "more", "du", "rm"} {
 		if got := shellOutput(t, s, out, "help "+name); !strings.Contains(got, "Usage: "+name) {
 			t.Errorf("missing help for %s: %q", name, got)
 		}
