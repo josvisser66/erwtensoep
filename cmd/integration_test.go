@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,30 @@ func TestIntegrationBackupLocalArchive(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(restoreDir, "beta.txt")); err != nil || string(data) != "beta" {
 		t.Fatalf("restore beta mismatch: %v (%q)", err, string(data))
+	}
+
+	before, err := os.ReadFile(sbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	cli := exec.Command(bin, "--archive-dir", archiveDir, "cli")
+	cli.Stdin = strings.NewReader("ls\ncat -n alpha.txt\nmore beta.txt\ndu -sb /\ncd missing\npwd\nexit\n")
+	cli.Stdout, cli.Stderr = &stdout, &stderr
+	if err := cli.Run(); err != nil {
+		t.Fatalf("cli failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, expected := range []string{"erwtensoep:/ ", "alpha.txt\nbeta.txt\n", "     1\talpha", "beta", "9\t/\n"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Errorf("cli output missing %q: %s", expected, stdout.String())
+		}
+	}
+	if !strings.Contains(stderr.String(), "cd: /missing: no such file or directory") {
+		t.Errorf("cli error missing: %s", stderr.String())
+	}
+	after, err := os.ReadFile(sbPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("cli modified archive metadata: %v", err)
 	}
 }

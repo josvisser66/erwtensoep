@@ -25,6 +25,7 @@ type config struct {
 	Shallow        *bool   `json:"shallow"`
 	Merge          *config `json:"merge"`
 	Ls             *config `json:"ls"`
+	Cli            *config `json:"cli"`
 	Rm             *config `json:"rm"`
 	Restore        *config `json:"restore"`
 	Verify         *config `json:"verify"`
@@ -70,6 +71,8 @@ func applyConfig(cmd *cobra.Command) error {
 		applyConfigSection(cmd, cfg.Merge)
 	case "ls":
 		applyConfigSection(cmd, cfg.Ls)
+	case "cli":
+		applyConfigSection(cmd, cfg.Cli)
 	case "rm":
 		applyConfigSection(cmd, cfg.Rm)
 	case "restore":
