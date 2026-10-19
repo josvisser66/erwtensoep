@@ -205,10 +205,10 @@ func TestShellUsesLatestVersion(t *testing.T) {
 	newVersion.MTime = time.Unix(200, 0)
 	s.sb.Entries["alpha.txt"]["v2"] = &newVersion
 	s.nodes = archiveTree(s.sb)
-	if got := shellOutput(t, s, out, "cat alpha.txt"); got != noteContents {
+	if got := shellOutput(t, s, out, "cat --latest alpha.txt"); got != noteContents {
 		t.Fatalf("did not read the latest version: %q", got)
 	}
-	if got := shellOutput(t, s, out, "du -sb alpha.txt"); got != fmt.Sprintf("%d\talpha.txt\n", len(noteContents)) {
+	if got := shellOutput(t, s, out, "du --latest -sb alpha.txt"); got != fmt.Sprintf("%d\talpha.txt\n", len(noteContents)) {
 		t.Fatalf("did not count only the latest version: %q", got)
 	}
 }

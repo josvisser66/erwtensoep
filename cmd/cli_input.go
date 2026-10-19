@@ -79,7 +79,7 @@ func (s *archiveShell) readCommand() (line string, err error) {
 	return line, err
 }
 
-var shellCommands = []string{"cat", "cd", "du", "exit", "help", "ls", "more", "pwd", "quit", "rm"}
+var shellCommands = []string{"cat", "cd", "du", "exit", "help", "ls", "more", "pwd", "quit", "rm", "versions"}
 
 // complete replaces the word at the cursor, preserving later arguments. It
 // returns escaped display candidates when the prefix is ambiguous.
@@ -104,7 +104,7 @@ func (s *archiveShell) complete(line string, pos int) (string, int, []string) {
 	} else {
 		command := words[0].text
 		switch command {
-		case "cd", "ls", "cat", "more", "du", "rm":
+		case "cd", "ls", "cat", "more", "du", "rm", "versions":
 			endOptions := false
 			for _, arg := range words[1:index] {
 				endOptions = endOptions || arg.text == "--"
@@ -119,7 +119,7 @@ func (s *archiveShell) complete(line string, pos int) (string, int, []string) {
 					return line, pos, nil
 				}
 			}
-			matches = s.completePath(word.text, command == "cd", command != "rm")
+			matches = s.completePath(word.text, command == "cd", command != "rm" && command != "versions")
 			if !endOptions {
 				for i, match := range matches {
 					if strings.HasPrefix(match, "-") || (command == "more" && strings.HasPrefix(match, "+")) {

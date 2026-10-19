@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
-	"sort"
 )
 
 // RemoveTargets returns archive paths that match the provided patterns.
@@ -15,20 +13,7 @@ func (sb *Superblock) RemoveTargets(patterns []string) ([]string, error) {
 		return nil, errors.New("no remove patterns specified")
 	}
 
-	normalized := make([]string, 0, len(patterns))
-	for _, p := range patterns {
-		normalized = append(normalized, normalizePattern(p))
-	}
-
-	var targets []string
-	for path := range sb.Entries {
-		if matchesAnyPattern(filepath.ToSlash(path), normalized) {
-			targets = append(targets, filepath.ToSlash(path))
-		}
-	}
-
-	sort.Strings(targets)
-	return targets, nil
+	return sb.matchingPaths(patterns), nil
 }
 
 // Remove deletes entries matching patterns and prunes unreferenced blobs and blocks.
@@ -45,22 +30,54 @@ func (sb *Superblock) Remove(patterns []string) (int, error) {
 // The updated index is saved before deleting unreferenced objects, so a failed
 // index write does not first destroy the data it still references.
 func (sb *Superblock) RemovePaths(paths []string) (int, error) {
+	selected := make(map[string][]string, len(paths))
+	for _, name := range paths {
+		for id := range sb.Entries[name] {
+			selected[name] = append(selected[name], id)
+		}
+	}
+	pathsRemoved, _, err := sb.removeVersions(selected)
+	return pathsRemoved, err
+}
+
+// RemoveVersions removes only the selected IDs at exact archive paths and
+// returns the number of versions removed. Empty selections, missing IDs/paths,
+// and duplicates are ignored. Other versions keep their data references.
+func (sb *Superblock) RemoveVersions(selected map[string][]string) (int, error) {
+	_, versionsRemoved, err := sb.removeVersions(selected)
+	return versionsRemoved, err
+}
+
+func (sb *Superblock) removeVersions(selected map[string][]string) (int, int, error) {
 	entries := maps.Clone(sb.Entries)
 	var garbage []string
-	removed := 0
-	for _, name := range paths {
-		versions, ok := entries[name]
-		if !ok {
+	pathsRemoved, versionsRemoved := 0, 0
+	for name, ids := range selected {
+		// Clone the nested map too: a failed index write must leave every
+		// version in the live index intact, not just restore the outer map.
+		versions := maps.Clone(entries[name])
+		removed := 0
+		for _, id := range ids {
+			if _, exists := versions[id]; !exists {
+				continue
+			}
+			delete(versions, id)
+			garbage = append(garbage, blobKey(sb.entriesDir, id))
+			removed++
+		}
+		if removed == 0 {
 			continue
 		}
-		for id := range versions {
-			garbage = append(garbage, blobKey(sb.entriesDir, id))
+		if len(versions) == 0 {
+			delete(entries, name)
+		} else {
+			entries[name] = versions
 		}
-		delete(entries, name)
-		removed++
+		pathsRemoved++
+		versionsRemoved += removed
 	}
-	if removed == 0 || sb.options.DryRun {
-		return removed, nil
+	if versionsRemoved == 0 || sb.options.DryRun {
+		return pathsRemoved, versionsRemoved, nil
 	}
 
 	blobRefs := make(map[string]bool)
@@ -77,11 +94,11 @@ func (sb *Superblock) RemovePaths(paths []string) (int, error) {
 	for blobID := range blobRefs {
 		blob := sb.Blobs[blobID]
 		if blob == nil {
-			return 0, fmt.Errorf("cannot remove: remaining entry references missing blob %s", blobID)
+			return 0, 0, fmt.Errorf("cannot remove: remaining entry references missing blob %s", blobID)
 		}
 		for _, blockID := range blob.Blocks {
 			if sb.Blocks[blockID] == nil {
-				return 0, fmt.Errorf("cannot remove: remaining blob references missing block %s", blockID)
+				return 0, 0, fmt.Errorf("cannot remove: remaining blob references missing block %s", blockID)
 			}
 			blockRefs[blockID] = true
 		}
@@ -107,7 +124,7 @@ func (sb *Superblock) RemovePaths(paths []string) (int, error) {
 	if err := sb.Write(); err != nil {
 		sb.Entries, sb.Blobs, sb.Blocks = oldEntries, oldBlobs, oldBlocks
 		sb.Generation, sb.LastUpdate = oldGeneration, oldUpdate
-		return 0, err
+		return 0, 0, err
 	}
 	for _, block := range blocks {
 		block.blobs = nil
@@ -127,5 +144,5 @@ func (sb *Superblock) RemovePaths(paths []string) (int, error) {
 			errs = append(errs, fmt.Errorf("removed entries, but could not delete unused object %s: %w", key, err))
 		}
 	}
-	return removed, errors.Join(errs...)
+	return pathsRemoved, versionsRemoved, errors.Join(errs...)
 }

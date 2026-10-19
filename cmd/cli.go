@@ -21,7 +21,7 @@ func init() { rootCmd.AddCommand(cliCmd) }
 var cliCmd = &cobra.Command{
 	Use:   "cli",
 	Short: "Browse an archive with an interactive Unix-style shell",
-	Long:  "Browse the latest archived versions using cd, pwd, ls, cat, more, and du.\nUse rm to remove archived paths and all their saved versions.\nPaths and symbolic links are resolved inside the archive. Type help for commands.",
+	Long:  "Browse archived files using cd, pwd, ls, cat, more, and du.\nFile commands offer version selection; --latest uses the newest without prompting.\nDirectory listings show the newest versions; versions FILE lists every version.\nUse rm to choose versions to remove, or rm --all-versions to remove them all.\nPaths and symbolic links are resolved inside the archive. Type help for commands.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sb, err := fs.GetSuperblock(&options)
@@ -97,11 +97,12 @@ func (s *archiveShell) run() error {
 const shellHelp = `Commands (use COMMAND --help for flags):
   cd [-L|-P] [DIR|-]      Change directory; no argument returns to /
   pwd [-L|-P]             Print the current directory
-  ls [-alhARdFtrS1] [PATH...]  List files and directories
-  cat [-nbsET] FILE...    Print file contents
-  more [-s] [-n LINES] [+LINE] FILE...  Page through file contents
-  du [-ahskbmc] [-d DEPTH] [PATH...]   Show uncompressed sizes
-  rm [-rRfiv] PATH...    Remove paths and all their saved versions
+  ls [-alhARdFtrS1] [--latest] [PATH...]  List files and directories
+  versions [-hr] FILE     List all saved versions, newest first
+  cat [-nbsET] [--latest] FILE...  Print file contents
+  more [-s] [-n LINES] [+LINE] [--latest] FILE...  Page through file contents
+  du [-ahskbmc] [-d DEPTH] [--latest] [PATH...]  Show uncompressed sizes
+  rm [-rRfiv] [--all-versions] PATH...  Choose saved versions to remove
   help [COMMAND]         Show help
   exit, quit             Leave the shell (EOF also exits)
 
@@ -112,13 +113,21 @@ saved in ~/.erwtensoep_history; piped commands are not recorded.
 
 Paths are archive-relative; / is the archive root. Quotes, backslash escapes,
 and unquoted *, ?, [...] globs are supported. Pipes, redirects, variables,
-and host commands are not interpreted. Only the latest file versions appear.
+and host commands are not interpreted. Directory browsing shows newest versions.
+cat, more, du, and ls with file operands offer a numbered version choice when
+several versions are saved. Choose one number, Enter to skip, or q to cancel;
+--latest skips the chooser. Choices apply only to that command. du also asks
+for files within directories; skipped files contribute nothing to the total.
+versions FILE lists every saved version of that path, including symlinks.
+ls appends (N versions) to files and symlinks with multiple saved versions.
 Directories are inferred; empty directories and directory metadata are absent.
 du counts logical file bytes, including hidden files, without deduplicating.
 more uses Space for a page, Enter for a line, and q to stop; redirected output
-is printed without paging. rm permanently removes all versions of selected paths;
--r/-R includes directory contents, -i asks before each path, -f skips missing
-paths and disables prompts, and -v lists removed paths. Other commands leave the
+is printed without paging. rm lists numbered versions when several are saved;
+enter numbers/ranges, all, Enter to skip, or q to cancel the command.
+--all-versions skips version selection; -i also confirms single-version/all-version
+removals. -r/-R includes directory contents; -f skips missing paths, removes all
+versions without prompts; -v lists removals. Other commands leave the
 archive unchanged. Shared file data is retained while another entry needs it.
 `
 
@@ -152,6 +161,8 @@ func (s *archiveShell) execute(line string) error {
 		err = s.pwd(args)
 	case "ls":
 		err = s.ls(args)
+	case "versions":
+		err = s.versions(args)
 	case "cat":
 		err = s.cat(args)
 	case "more":

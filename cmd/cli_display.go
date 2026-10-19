@@ -13,18 +13,6 @@ import (
 	"josvisser.nl/erwtensoep/internal/fs"
 )
 
-func (s *archiveShell) open(name string) (io.ReadCloser, error) {
-	n, err := s.resolve(name, true)
-	if err != nil {
-		return nil, err
-	}
-	file, ok := n.entry.(*fs.RegularFile)
-	if !ok {
-		return nil, fmt.Errorf("%s: is a directory", name)
-	}
-	return s.sb.OpenRegularFile(file)
-}
-
 func (s *archiveShell) cat(args []string) error {
 	f := pflag.NewFlagSet("cat", pflag.ContinueOnError)
 	number := f.BoolP("number", "n", false, "Number all output lines")
@@ -32,17 +20,22 @@ func (s *archiveShell) cat(args []string) error {
 	squeeze := f.BoolP("squeeze-blank", "s", false, "Suppress repeated empty lines")
 	ends := f.BoolP("show-ends", "E", false, "Display $ at each line ending")
 	tabs := f.BoolP("show-tabs", "T", false, "Display tabs as ^I")
-	if err := s.parseFlags(f, args, "cat [-nbsET] FILE..."); err != nil {
+	latest := f.Bool("latest", false, "Use the newest saved version without prompting")
+	if err := s.parseFlags(f, args, "cat [-nbsET] [--latest] FILE... (choose a version when multiple are saved)"); err != nil {
 		return err
 	}
 	if f.NArg() == 0 {
 		return fmt.Errorf("at least one file is required")
 	}
+	rows, errs, err := s.selectContentOperands(f.Args(), *latest)
+	if err != nil {
+		return err
+	}
 	out := bufio.NewWriter(s.out)
 	lineNumber, lineStart, previousBlank := 1, true, false
-	var errs []error
-	for _, name := range f.Args() {
-		file, err := s.open(name)
+	for _, row := range rows {
+		name := row.name
+		file, err := s.sb.OpenRegularFile(row.node.entry.(*fs.RegularFile))
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -122,7 +115,8 @@ func (s *archiveShell) more(args []string) error {
 	f := pflag.NewFlagSet("more", pflag.ContinueOnError)
 	lines := f.IntP("lines", "n", s.pageLines, "Number of lines per page (also -NUMBER)")
 	squeeze := f.BoolP("squeeze-blank", "s", false, "Suppress repeated empty lines")
-	if err := s.parseFlags(f, normalized, "more [-s] [-n LINES|-LINES] [+LINE] FILE..."); err != nil {
+	latest := f.Bool("latest", false, "Use the newest saved version without prompting")
+	if err := s.parseFlags(f, normalized, "more [-s] [-n LINES|-LINES] [+LINE] [--latest] FILE... (choose a version when multiple are saved)"); err != nil {
 		return err
 	}
 	if *lines < 1 || start < 1 {
@@ -131,9 +125,13 @@ func (s *archiveShell) more(args []string) error {
 	if f.NArg() == 0 {
 		return fmt.Errorf("at least one file is required")
 	}
-	var errs []error
-	for _, name := range f.Args() {
-		file, err := s.open(name)
+	rows, errs, err := s.selectContentOperands(f.Args(), *latest)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		name := row.name
+		file, err := s.sb.OpenRegularFile(row.node.entry.(*fs.RegularFile))
 		if err != nil {
 			errs = append(errs, err)
 			continue

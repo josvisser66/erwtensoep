@@ -40,7 +40,7 @@ erwtensoep/
 ├── go.mod, go.sum       Module definition and dependency checksums
 ├── Makefile             Build, test, and vet targets
 ├── README.md            Project entry point and feature overview
-└── resume               Local development convenience script
+└── LICENSE              Apache License 2.0
 ```
 
 | Source area | Responsibilities |
@@ -48,7 +48,7 @@ erwtensoep/
 | [`cmd/main.go`](../cmd/main.go), [`config.go`](../cmd/config.go), [`flags.go`](../cmd/flags.go) | Root Cobra command, home configuration, shared options, backend selection, exit status. |
 | `cmd/merge.go`, `list.go`, `remove.go`, `restore.go`, `verify.go`, `rebuild.go`, `stats.go`, `fsck.go` | Top-level command arguments, output, and confirmation behavior. |
 | [`cmd/cli.go`](../cmd/cli.go), [`cli_fs.go`](../cmd/cli_fs.go) | Shell loop, tokenizer/globbing, virtual directory tree, archive path resolution. |
-| `cmd/cli_commands.go`, `cli_display.go`, `cli_rm.go` | Navigation/listing/usage, streaming display/pager, interactive removal. |
+| `cmd/cli_commands.go`, `cli_versions.go`, `cli_display.go`, `cli_rm.go`, `version_selection.go`, `remove_versions.go` | Navigation/listing/usage, saved-version tables, streaming display/pager, and shared single/multiple version-selection prompts. |
 | [`cmd/cli_input.go`](../cmd/cli_input.go), [`cli_history.go`](../cmd/cli_history.go) | Terminal editor, completion, persistent history. |
 | [`internal/fs/superblock.go`](../internal/fs/superblock.go), `options.go`, `storage.go` | Index lifecycle, serialization, options, default backend. |
 | `internal/fs/block.go`, `blob.go`, `regularfile.go`, `symlink.go`, `filestats.go` | Object types, IDs, source metadata, file ingestion. |
@@ -406,10 +406,50 @@ loading a whole archived file in memory. Fully consumed blocks receive gzip
 validation, but this reader does not recompute CRC64 IDs as fsck does.
 
 The CLI builds an `archiveTree` snapshot from the latest entry per path. Equal
-modification times are broken deterministically by entry ID in the CLI. It
+modification times are broken deterministically by entry ID. It
 synthesizes parent directories and prefers a directory when archived
 descendants conflict with an entry at the same path. Top-level listing and
-restore use simpler latest-time selection without that deterministic tie break.
+restore use the same time/ID ordering, including zero and negative timestamps.
+Both top-level and interactive `ls` append `(N versions)` when a displayed
+entry's path has multiple saved versions. Interactive listings use the exact
+entry path to count versions, including a symlink's own history, and omit the
+suffix for inferred directories. The suffix does not affect sorting.
+
+`cmd/version_selection.go` implements the single-version chooser used by `cat`,
+`more`, `du`, explicit-file `ls`, and top-level `restore`. It reuses the numbered
+table with removal. `versionSelector` caches a choice (or skip) by exact index
+path for one command, including repeated operands and symlink aliases. It never
+changes the index or the default browsing tree. `--latest` bypasses prompts;
+otherwise single-version paths are automatic and multiple versions require one
+number. Invalid answers retry. Empty input skips, while `q`, unanswered EOF, or
+an I/O failure aborts collection before any operation output or restoration.
+The chooser uses the shell's shared buffered reader in cooked mode, so answers
+are separate from command history and pager keys.
+
+File-command resolution accepts a selection callback before following a link,
+so older link targets and file-to-link type changes remain accessible. Targets
+stay inside the virtual archive and have independent choices when versioned.
+Explicit content commands can read historical file entries at an inferred
+directory path. Navigation and completion retain the latest-version tree.
+`du` builds a temporary selected tree, recursively including hidden files and
+excluding skipped entries, before printing sizes. Display-depth limits do not
+limit selection because deeper files contribute to totals. Directory listings
+stay prompt-free; top-level pattern listings also show newest-version metadata.
+CLI globs expand before command dispatch, so matching files become explicit
+operands and receive the same selection as individually named files. Top-level
+`ls` instead retains pattern arguments and only prompts for exact file operands.
+Archive-wide statistics and integrity operations always include all versions.
+
+[`versions FILE`](../cmd/cli_versions.go) resolves the operand against the
+current archive directory, then reads all entries for that exact path from
+`Superblock.Entries`. It sorts a separate slice by modification time and entry
+ID, both descending, without modifying the index. `-r` reverses this order;
+`-h` formats logical sizes. The table includes IDs, RFC3339 timestamps with
+nanosecond precision when present, sizes, modes, paths, and symlink targets.
+Final symlinks retain their own histories. An inferred directory can still
+expose saved file entries at its path, while directories with no file history
+are rejected. Listing uses only index metadata and makes no block/blob reads,
+so the same command works with local and S3 archives.
 
 Path resolution walks components rather than blindly cleaning the entire path.
 It enforces file-versus-directory checks, handles logical/physical navigation,
@@ -431,8 +471,13 @@ commands, trim to 100 entries, and atomically replace the JSON file. Malformed
 history is preserved rather than overwritten. Lock/save failures retain pending
 commands for a later retry. Piped sessions do not load or save history.
 
-[`Restore`](../internal/fs/restore.go) selects matching latest entries, sorts
-their paths, and writes under the output directory. Regular files are rebuilt
+[`RestoreTargets`](../internal/fs/restore.go) expands restore patterns to sorted
+index paths using the same matcher as `RemoveTargets`. The command collects one
+version ID per path, then calls `RestoreVersions` with exact path/ID pairs.
+`RestoreVersions` validates every selection before touching output files, sorts
+paths, and writes under the output directory. The library's existing `Restore`
+API remains noninteractive and selects newest versions with deterministic ID
+tie-breaking. Regular files are rebuilt
 by decompressing blocks in order. Existing selected paths are removed first;
 parent directories are created as needed. Permissions and timestamps are
 reapplied with errors ignored. Symlinks retain their literal targets. Ownership,
@@ -444,13 +489,30 @@ resolver or enforce a symlink-safe output boundary.
 
 [`RemoveTargets`](../internal/fs/remove.go) expands top-level patterns to
 archive paths. `Remove` passes those paths to `RemovePaths`. Interactive removal
-resolves and expands archive paths itself and calls `RemovePaths` directly,
-so a quoted literal `*` or `[` in a filename is not interpreted a second time.
+resolves and expands archive paths itself. Both command interfaces build an
+exact path-to-version-ID selection and call `RemoveVersions`, so a quoted
+literal `*` or `[` in a filename is not interpreted a second time.
+
+`cmd/remove_versions.go` shares the numbered chooser between top-level and
+interactive removal. Tables use the same sorting and metadata formatter as
+`versions`. The selector accepts individual numbers, inclusive ranges, or all,
+validates a complete answer, and deduplicates indices before mapping them to
+entry IDs. All choices are collected before mutation. Blank input skips a path;
+cancel, unanswered EOF, or an I/O error abandons the pending selection.
+`--all-versions` bypasses the chooser; interactive `-f` also bypasses all prompts.
+Top-level removal retains its final confirmation. Interactive removal rebuilds
+the browsing tree, so removing the newest entry exposes the next saved version.
+
+`RemovePaths` still removes all versions and returns a path count for callers
+using the original API. `RemoveVersions` returns a removed-version count;
+empty selections and missing IDs/paths are ignored, never interpreted as all.
+Both delegate to the same index/garbage-collection implementation.
 
 There are no persistent numeric block reference counts to decrement. Removal
 recomputes reachability from all surviving entry versions:
 
-1. Clone the entry map and remove every version of the exact selected paths.
+1. Clone the outer entry map and each selected path's version map, remove only
+   selected IDs, and drop a path when its last version is gone.
 2. Collect referenced blob IDs from surviving regular-file entries.
 3. Collect referenced block IDs from those blobs, rejecting missing metadata.
 4. Build new blob/block maps and a garbage list of removed entry records and
@@ -602,7 +664,8 @@ validation and repair path.
   captured from a filesystem snapshot. Preserved or subsecond modification
   times can defeat metadata-based change detection.
 - Versions are per path, not named backup snapshots. “Latest” follows file
-  modification time; there is no public restore-by-version command.
+  modification time. The command's numbered chooser supports older versions;
+  there is no date or version-ID command-line flag.
 - Directory metadata, empty directories, hard-link relationships, ACLs, and
   extended attributes are not represented. Owner/group names are recorded but
   restore does not apply ownership.
@@ -651,12 +714,13 @@ go test ./internal/storage ./internal/fs ./cmd -run S3
 | --- | --- |
 | `internal/fs/backup_test.go`, `restore_test.go`, `rebuild_test.go` | Versions, sharing, restoration patterns, independent index reconstruction. |
 | `internal/fs/read_test.go` | Streaming across blocks, early close, missing/corrupt content. |
-| `internal/fs/remove_test.go` | Shared data retention, exact paths, persistence, dry run, failed index writes. |
+| `internal/fs/remove*_test.go`, `cmd/remove_versions_test.go` | Partial/all-version removal, shared data retention, exact paths, persistence, cancellation, dry run, failed index writes and prompt I/O. |
 | `internal/fs/stats_test.go`, `cmd/stats_test.go` | Sharing calculations, stored sizes, compression expansion, report formatting. |
 | `internal/fs/fsck_test.go`, `cmd/fsck_test.go` | Corruption cascades, orphan recovery, stale plans, index discrepancies, I/O failures, confirmation, progress totals/percentages, clean rechecks. |
 | `internal/storage/*_test.go` | Backend contracts, fan-out layout, size fallback, pruning, no-follow inventory. |
 | `internal/storage/s3_test.go`, `internal/fs/s3_test.go`, `cmd/s3_test.go` | Endpoint/region/credential configuration, signed HTTP requests, pagination, prefix isolation, errors, full S3 command flow, corruption repair, orphan recovery. |
-| `cmd/cli*_test.go` | Navigation, globs/quoting, listings, pager, completion, history persistence, removal. |
+| `cmd/cli*_test.go` | Navigation, globs/quoting, listings and saved versions, pager, completion, history persistence, removal. |
+| `cmd/version_selection_test.go` | Selected-version reads, size totals, restoration/listing, symlinks, skipped paths, cancellation, input/output errors, latest flags, and pager input boundaries. |
 | `cmd/integration_test.go` | Actual executable behavior and persistence across invocations. |
 
 When adding a command, register it with Cobra and document its options and

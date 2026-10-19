@@ -123,7 +123,8 @@ func (s *archiveShell) ls(args []string) error {
 	f.BoolVarP(&o.byTime, "time", "t", false, "Sort by modification time, newest first")
 	f.BoolVarP(&o.bySize, "size", "S", false, "Sort by size, largest first (takes precedence over -t)")
 	f.BoolP("one-per-line", "1", false, "List one entry per line (default)")
-	if err := s.parseFlags(f, args, "ls [-alhARdFtrS1] [PATH...]"); err != nil {
+	latest := f.Bool("latest", false, "Use the newest saved version for file operands without prompting")
+	if err := s.parseFlags(f, args, "ls [-alhARdFtrS1] [--latest] [PATH...] (choose versions for file operands; directories list newest versions)"); err != nil {
 		return err
 	}
 	names := f.Args()
@@ -132,14 +133,31 @@ func (s *archiveShell) ls(args []string) error {
 	}
 	var errs []error
 	var rows []listingRow
+	v := newVersionSelector(s.sb, s.in, s.out, *latest)
 	for _, name := range names {
-		n, err := s.resolve(name, false)
+		n, err := v.resolve(s, name, false, false)
+		if v.err != nil {
+			return v.err
+		}
+		if errors.Is(err, errVersionSkipped) {
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		if !o.long && !o.directory {
-			if resolved, err := s.resolve(name, true); err == nil && resolved.isDir() {
+			// Follow the chosen symlink to a directory, but do not ask about
+			// target files whose metadata is not part of this listing.
+			resolved, err := s.resolveWithSelection(name, true, func(target *archiveNode, _ bool) (*archiveNode, error) {
+				if !target.isDir() {
+					if choice := v.choices[target.entry.GetPath()]; choice != nil {
+						return &archiveNode{path: target.path, entry: choice.entry}, nil
+					}
+				}
+				return target, nil
+			})
+			if err == nil && resolved.isDir() {
 				n = resolved
 			}
 		}
@@ -216,6 +234,10 @@ func sortListingRows(rows []listingRow, o listingOptions) {
 
 func (s *archiveShell) printNode(n *archiveNode, name string, o listingOptions) {
 	stats := n.stats()
+	var versionSuffix string
+	if !n.isDir() {
+		versionSuffix = versionCountSuffix(len(s.sb.Entries[n.entry.GetPath()]))
+	}
 	if o.classify {
 		switch {
 		case n.isDir():
@@ -229,7 +251,7 @@ func (s *archiveShell) printNode(n *archiveNode, name string, o listingOptions) 
 		}
 	}
 	if !o.long {
-		fmt.Fprintln(s.out, name)
+		fmt.Fprintln(s.out, name+versionSuffix)
 		return
 	}
 	sizeText := stats.Size
@@ -243,7 +265,7 @@ func (s *archiveShell) printNode(n *archiveNode, name string, o listingOptions) 
 	if link, ok := n.entry.(*fs.Symlink); ok {
 		name += " -> " + link.Target
 	}
-	fmt.Fprintf(s.out, "%s %s %s %8s %16s %s\n", stats.Mode, stats.Owner, stats.Group, sizeText, mtime, name)
+	fmt.Fprintf(s.out, "%s %s %s %8s %16s %s%s\n", stats.Mode, stats.Owner, stats.Group, sizeText, mtime, name, versionSuffix)
 }
 
 func (s *archiveShell) du(args []string) error {
@@ -256,7 +278,8 @@ func (s *archiveShell) du(args []string) error {
 	bytes := f.BoolP("bytes", "b", false, "Show exact logical byte counts")
 	total := f.BoolP("total", "c", false, "Print a grand total")
 	depth := f.IntP("max-depth", "d", -1, "Show entries at most this many levels below each argument")
-	if err := s.parseFlags(f, args, "du [-ahskbmc] [-d DEPTH] [PATH...]"); err != nil {
+	latest := f.Bool("latest", false, "Use the newest saved version of every file without prompting")
+	if err := s.parseFlags(f, args, "du [-ahskbmc] [-d DEPTH] [--latest] [PATH...] (choose a version of each file counted)"); err != nil {
 		return err
 	}
 	if *depth < -1 || (f.Changed("max-depth") && *depth < 0) {
@@ -303,15 +326,47 @@ func (s *archiveShell) du(args []string) error {
 	if len(names) == 0 {
 		names = []string{"."}
 	}
-	var grandTotal int64
+	v := newVersionSelector(s.sb, s.in, s.out, *latest)
+	var selectTree func(*archiveNode) (*archiveNode, error)
+	selectTree = func(n *archiveNode) (*archiveNode, error) {
+		if !n.isDir() {
+			return v.node(n)
+		}
+		copy := &archiveNode{path: n.path}
+		for _, child := range n.children {
+			selected, err := selectTree(child)
+			if errors.Is(err, errVersionSkipped) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			copy.children = append(copy.children, selected)
+		}
+		return copy, nil
+	}
 	var errs []error
+	var rows []listingRow
 	for _, name := range names {
-		n, err := s.resolve(name, false)
+		n, err := v.resolve(s, name, false, false)
+		if err == nil {
+			n, err = selectTree(n)
+		}
+		if v.err != nil {
+			return v.err
+		}
+		if errors.Is(err, errVersionSkipped) {
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		grandTotal += walk(n, name, 0)
+		rows = append(rows, listingRow{n, name})
+	}
+	var grandTotal int64
+	for _, row := range rows {
+		grandTotal += walk(row.node, row.name, 0)
 	}
 	if *total {
 		printSize(grandTotal, "total")

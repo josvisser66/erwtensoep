@@ -75,10 +75,23 @@ metadata has not changed are skipped without rereading their contents. In
 particular, changing content while preserving size and modification time can
 make a change go undetected.
 
-Browsing, listing, and restoring select the version with the greatest saved
-modification time, not the time of the merge. There is currently no command to
-select an older version by date or ID. `stats` includes all versions, and `rm`
-removes all versions of each selected path.
+Directory browsing shows the version with the greatest saved modification
+time, not the time of the merge. `cat`, `more`, `du`, `restore`, and `ls` with
+explicit file operands offer a numbered list when a file has multiple versions.
+Choose one number, Enter to skip the file, or `q` to cancel the command. Versions
+are sorted newest first, with equal times ordered by version ID descending.
+Use `--latest` on these commands to use the newest versions without prompting.
+Single-version files need no selection. Choices last only for that command;
+`versions FILE` displays all saved metadata without making a choice.
+
+All choices are collected before printing file contents or restoring files.
+Cancellation or EOF without an answer abandons the whole operation. Invalid
+choices prompt again. Selection answers are not stored in command history.
+`rm` additionally accepts multiple versions or `all`. Directory listings and
+top-level pattern listings remain overviews of newest versions. Inside the CLI,
+globs expand to individual operands, so `ls *.txt` offers choices for matching
+files. Archive-wide `stats`, `verify`,
+`fsck`, and `rebuild` include every saved version and do not ask for selections.
 
 Keep an archive idle while checking or repairing it, and use one modifying
 process at a time. The archive does not have a lock coordinating separate
@@ -267,6 +280,19 @@ targets, resolve inside the archive. Reading files does not extract them to the
 host filesystem. Use Tab for commands and paths, and Up/Down for command
 history. See the [interactive reference](#interactive-command-reference).
 
+To inspect a file's history, run `versions notes.txt`. When you then run
+`cat notes.txt`, the command displays a numbered table if multiple versions
+exist. For a file with three versions, selecting the second newest looks like:
+
+```text
+Choose version (1-3; Enter to skip; q to cancel): 2
+```
+
+The selection applies only to that command. `more notes.txt` asks again;
+`cat --latest notes.txt` reads the newest without asking. Use `du --latest -sh .`
+for a directory total without individual version questions. Files with only
+one saved version are processed immediately without a chooser.
+
 ### Restore selected files or directories
 
 Restore into a fresh output directory:
@@ -288,6 +314,15 @@ erwtensoep -a "$HOME/archives/work" restore -o "$HOME/restored-all" documents ph
 There is no restore-all switch, and `'*'` does not match paths containing `/`.
 Use `ls` or the interactive `ls -A /` to inspect the names first, including hidden
 names. Restoring with no patterns is an error.
+
+For each matching file or symlink with multiple versions, choose one numbered
+version from the displayed list. Enter skips that path; `q` or EOF without an
+answer cancels before any output files are changed. To restore the newest
+versions without questions, add `--latest`:
+
+```sh
+erwtensoep -a "$HOME/archives/work" restore --latest -o "$HOME/restored-work" documents
+```
 
 Restore replaces existing output paths without confirmation, including removing
 an existing directory at a selected file path. Regular-file permission bits and
@@ -326,8 +361,8 @@ incompressible data; that appears as an increase.
 `stats` excludes metadata, superblock backups, unreferenced objects, and
 filesystem allocation overhead. Use your host's `du` on a local archive directory
 for disk usage, or your provider's storage reports for S3. The CLI's `du`
-instead measures logical sizes of the latest
-files, without deduplication.
+instead measures logical sizes of the selected file versions, without
+deduplication; `du --latest` uses the newest versions without asking.
 
 ### Remove archived paths
 
@@ -346,9 +381,13 @@ erwtensoep:/ rm -i documents/obsolete.txt
 erwtensoep:/ rm -riv old-project
 ```
 
-Both remove all versions of selected paths. The interactive command removes
-immediately unless `-i` is specified; its directory removal requires `-r` or
-`-R`. Shared blobs and blocks remain as long as a surviving file version needs
+For a path with multiple versions, both commands show a numbered version list
+and ask which ones to remove. Enter numbers/ranges such as `1,3-5`, or `all`.
+Enter alone skips that path; `q` cancels the command. Use `--all-versions` to
+select every version without the chooser. The top-level command asks for final
+confirmation; the interactive command removes single-version paths immediately
+unless `-i` is specified. Its directory removal requires `-r` or `-R`.
+Shared blobs and blocks remain as long as a surviving file version needs
 them. Unused objects and their empty physical parent directories are removed
 recursively. Source files are unaffected.
 
@@ -443,9 +482,13 @@ and [exclusion rules](#preview-or-limit-a-merge).
 
 ### `ls [PATTERN...]`
 
-Print modification time, byte size, and path for the latest version of each
-matching entry. With no patterns, list all paths. Output is a flat list and is
-not guaranteed to be sorted. There are no command-specific flags; `-l`, `-R`,
+Print modification time, byte size, and path for each matching entry. An explicit
+file operand offers version selection; `--latest` skips the chooser. Directory,
+pattern, and no-argument listings show newest versions. Append `(N versions)`
+when that path has multiple saved versions, for example
+`documents/notes.txt (3 versions)`. With no patterns,
+list all paths. Output is a flat list and is not guaranteed to be sorted.
+There are no command-specific flags; `-l`, `-R`,
 and `-a` as a hidden-file switch belong to the interactive `ls`, not this command.
 
 Use archive-relative names such as `documents`, without a leading or trailing
@@ -456,29 +499,40 @@ archived path; `*` does not cross `/`. Quote globs in your host shell, for examp
 ### `cli`
 
 Open the interactive archive shell at `/`. No positional arguments or
-command-specific flags are accepted. It loads an in-memory view of the latest
-versions; reopen the CLI to see changes made by another process. Its own `rm`
-refreshes the view immediately. See the [interactive reference](#interactive-command-reference).
+command-specific flags are accepted. Directory browsing shows the latest versions;
+[`versions FILE`](#versions-file) lists every saved version of a file relative
+to the current archive directory. Reopen the CLI to see changes made by another
+process. Its own `rm` refreshes the view immediately. See the
+[interactive reference](#interactive-command-reference).
 
 ### `restore -o DIRECTORY PATTERN...`
 
-Restore the latest matching file and symlink versions. `-o` / `--output-dir`
-is required unless configured. At least one pattern is required. No matches is
+Restore matching files and symlinks, choosing one saved version per path when
+multiple versions exist. `--latest` uses the newest versions without asking.
+`-o` / `--output-dir` is required unless configured. At least one pattern is
+required. No matches is
 a successful operation that restores nothing.
 
 Plain names match themselves and descendants; a trailing `/` selects
 descendants only. Globs match full archive-relative paths and do not cross `/`.
-There is no historical-version selector, overwrite prompt, or dry-run flag.
+Choices are collected before any files are written; Enter skips a file and `q`
+or unanswered EOF cancels the operation. There is no overwrite prompt or
+dry-run flag.
 See the [restore task](#restore-selected-files-or-directories).
 
 ### `rm PATTERN...`
 
-List matching archive paths, then ask `Proceed with removal? [y/N]:`. Only `y`
-or `yes`, case-insensitively, confirms. Declining returns an error; no matches
-prints a message and succeeds. At least one pattern is required.
+For each matching path with multiple saved versions, show a numbered table and
+ask which versions to remove. The choices and cancellation behavior are the
+same as [interactive `rm`](#rm-path). Single-version paths are selected
+automatically. `--all-versions` selects every version without the chooser.
+After selection, print a summary and ask `Proceed with removal? [y/N]:`.
+Only `y` or `yes`, case-insensitively, confirms. Declining returns an error;
+no matches or no selected versions prints a message and succeeds. At least one
+pattern is required.
 
-Matching follows the same rules as `restore`. All versions of the selected
-paths are removed. There are no `-r`, `-f`, `-i`, or `-v` options on this
+Matching follows the same rules as `restore`. Only the selected versions are
+removed. There are no `-r`, `-f`, `-i`, or `-v` options on this
 top-level command; those belong to interactive `rm`.
 
 ### `stats`
@@ -613,7 +667,8 @@ enter one command per line.
 Tab completes command names and archive paths. A unique command or file adds a
 space; a directory adds `/`. Ambiguous completion extends the common prefix
 or lists matches. `cd` completes directories only. Completion supports quoted
-names and symlinked directories; `rm` completes symlinks without adding `/`.
+names and symlinked directories; `rm` and `versions` complete symlinks without
+adding `/` so the commands act on the link itself.
 
 Up/Down recalls the last 100 commands, shared across archives and CLI sessions.
 Down past the newest entry restores the unfinished line. Left/Right and
@@ -624,7 +679,7 @@ separate `.erwtensoep_history.lock` file. This lock protects history only.
 
 Close CLI sessions before deleting the history file to clear it. History errors
 produce a warning; in-memory history remains available and saving is retried.
-Removal confirmation answers are not commands and are not saved.
+Removal confirmations and all version selections are not commands and are not saved.
 
 When input or output is not a terminal, interactive editing and paging are
 disabled and commands are not saved in history. You can feed command lines
@@ -644,6 +699,13 @@ handling `..`. `pwd -P` prints the resolved path. `-L` and `-P` cannot be combin
 ### `ls [PATH...]`
 
 List the current directory by default, sorted by name, one entry per line.
+Explicit file operands offer version selection; `--latest` chooses the newest
+without prompting. Directory listings, including `-R`, show newest versions.
+Files and symlinks with multiple saved versions have a count appended, such as
+`notes.txt (3 versions)`. This also appears in long and recursive listings.
+For symlinks, the count describes the link's own versions. Single-version
+entries and inferred directories have no count suffix. Use `versions FILE`
+to inspect the saved versions.
 
 | Options | Effect |
 | --- | --- |
@@ -655,6 +717,7 @@ List the current directory by default, sorted by name, one entry per line.
 | `-d`, `--directory` | List directories themselves rather than contents. |
 | `-F`, `--classify` | Add `/` for directories, `@` for links, `*` for executables. |
 | `-t`, `--time` | Sort by newest modification time first. |
+| `--latest` | Use newest versions for file operands without asking. |
 | `-S`, `--size` | Sort largest first; overrides `-t`. |
 | `-r`, `--reverse` | Reverse sorting. |
 | `-1`, `--one-per-line` | One entry per line, already the default. |
@@ -662,9 +725,50 @@ List the current directory by default, sorted by name, one entry per line.
 Inferred directories display synthetic metadata: read-only directory mode,
 unknown owner/group, size zero, and no modification time.
 
+### `versions FILE`
+
+List every saved version of one file, resolving its name from the current
+archive directory. Absolute archive paths and paths through subdirectories also
+work. For example:
+
+```text
+erwtensoep:/ cd documents
+erwtensoep:/documents/ versions notes.txt
+erwtensoep:/documents/ versions -hr "meeting notes.txt"
+```
+
+Each row shows the entry's version ID, saved modification time (including
+timezone and fractional seconds when present), logical size in bytes,
+permissions, and archive path. Versions appear newest modification time first;
+equal timestamps are ordered by version ID descending, matching the CLI's
+latest-version selection. These are source-file modification times, not the
+time the file was backed up. Versions with shared contents still get separate
+rows.
+
+| Options | Effect |
+| --- | --- |
+| `-h`, `--human-readable` | Format sizes in binary units. |
+| `-r`, `--reverse` | Reverse sorting to show oldest versions first. |
+
+Use `help versions` or `versions --help` inside the CLI to see usage and flags.
+
+A final symlink shows its own saved versions and each target; intermediate
+symlinks are resolved inside the archive. A directory with no saved file
+versions produces an error. If a path used to be a file and is now an inferred
+directory, its older file versions can still be listed. Exactly one operand
+is required after glob expansion. This command only displays metadata; it does
+not change the archive or select a version for another command. File commands
+present their own numbered chooser when needed.
+
 ### `cat FILE...`
 
 Stream and concatenate archived file contents. At least one file is required.
+Choose one saved version per file when prompted, or use `--latest` to select the
+newest automatically. Enter skips a file and `q` cancels before any contents are
+printed. A versioned symlink is selected before following its saved target; a
+versioned target then gets its own choice. Repeated paths or aliases reuse the
+same choice within a command. Old file entries at paths that are now inferred
+directories remain readable by naming that path directly.
 
 | Options | Effect |
 | --- | --- |
@@ -673,6 +777,7 @@ Stream and concatenate archived file contents. At least one file is required.
 | `-s`, `--squeeze-blank` | Suppress repeated empty lines. |
 | `-E`, `--show-ends` | Display `$` at line endings. |
 | `-T`, `--show-tabs` | Display tabs as `^I`. |
+| `--latest` | Use newest versions without asking. |
 
 ### `more FILE...`
 
@@ -680,6 +785,8 @@ Page through file contents. `-n N` / `--lines N` or `-N` sets the page length;
 `+N` begins at line N. `-s` / `--squeeze-blank` suppresses repeated empty lines.
 The default page length follows terminal height when available. Lengths and
 starting lines must be positive.
+Version selection and `--latest` work as for `cat`; choices are collected before
+paging starts. Pager keys are separate from version-selection answers.
 
 Space advances a page, Enter advances one line, and `q` stops. Without terminal
 input and output, contents are printed without paging.
@@ -690,6 +797,9 @@ Show uncompressed logical usage, defaulting to the current directory. Hidden
 descendants are counted, symlink targets are not followed, and every pathname
 counts separately even if its data is shared. Symlinks contribute their saved
 size; inferred directories contribute zero bytes of their own.
+Choose one version of each file with multiple saved versions, including hidden
+descendants. Enter skips that file and excludes its size; `q` cancels before
+printing totals. Use `--latest` to calculate newest-version usage without asking.
 
 | Options | Effect |
 | --- | --- |
@@ -701,6 +811,7 @@ size; inferred directories contribute zero bytes of their own.
 | `-m`, `--megabytes` | 1048576-byte units. |
 | `-c`, `--total` | Add a grand total across operands. |
 | `-d N`, `--max-depth N` | Limit displayed depth relative to each operand. |
+| `--latest` | Use newest versions throughout the selected directories without asking. |
 
 Directory totals include deeper descendants even when display depth is limited.
 Numeric units round up after summing bytes. `-s` conflicts with a depth other
@@ -708,14 +819,28 @@ than zero. Overlapping operands contribute separately to the grand total.
 
 ### `rm PATH...`
 
-Remove all saved versions of selected paths. Without `-i`, removal is immediate.
+Remove saved versions of selected paths. When a path has multiple versions,
+show a numbered table with version IDs, modification times, sizes, permissions,
+and symlink targets, newest first. Enter one or more numbers separated by spaces
+or commas (`1,3`), inclusive ranges (`2-4`), or `all`. Combinations such as
+`1,3-5` work; duplicates are ignored. Invalid selections prompt again without
+removing anything. Numbers refer to this displayed list, not permanent IDs.
+
+Enter alone skips the current path; `q` or EOF without an answer cancels the
+entire command. All choices are collected before any deletion, including for
+recursive removal. Unselected versions remain available. If the newest is
+removed, directory browsing and `--latest` operations use the newest remaining
+version. Other file commands still offer a choice when multiple versions
+remain. A path disappears when its last saved version is removed.
+Single-version paths are removed immediately unless `-i` is specified.
 
 | Options | Effect |
 | --- | --- |
 | `-r`, `-R`, `--recursive` | Remove directories and their descendants, including hidden files. |
-| `-i`, `--interactive` | Confirm each archived path and all its versions. |
-| `-f`, `--force` | Ignore missing paths and disable prompts. |
-| `-v`, `--verbose` | Print removed paths. |
+| `--all-versions` | Select every saved version without the version chooser. |
+| `-i`, `--interactive` | Also confirm single-version paths or `--all-versions` removals; choosing versions already confirms that selection. |
+| `-f`, `--force` | Ignore missing paths and remove all versions without prompts. |
+| `-v`, `--verbose` | Print removed paths and the remaining count after partial removal. |
 
 The last `-f` or `-i` wins, including in combined flags. Force does not suppress
 other errors. Root, `.` and `..` operands are refused. Final symlinks are
@@ -741,7 +866,7 @@ moves to its nearest surviving ancestor.
 | An updated file was skipped | Merge identifies versions from metadata. Check size and modification time. |
 | A glob matches too little | Top-level patterns match whole paths and `*` does not cross `/`; use a directory name for its subtree. |
 | `ls -l` fails | Start `cli` for Unix-style listing flags; top-level `ls` has fixed output. |
-| `du` and `stats` differ | CLI `du` measures latest logical paths; `stats` measures all versions and sharing/compression stages. |
+| `du` and `stats` differ | CLI `du` measures selected logical file versions; `stats` measures all versions and sharing/compression stages. |
 | Loading the superblock fails | Try `fsck -nv`, which can inspect a missing or damaged index independently. |
 | Empty hash directories remain | `fsck` reports them and can prune them; new deletions prune empty parents automatically. |
 | History does not persist | Check warnings, file permissions, and whether stdin/stdout are terminals. |

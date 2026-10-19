@@ -101,12 +101,12 @@ func TestIntegrationBackupLocalArchive(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	cli := exec.Command(bin, "--archive-dir", archiveDir, "cli")
-	cli.Stdin = strings.NewReader("ls\ncat -n alpha.txt\nmore beta.txt\ndu -sb /\ncd missing\npwd\nexit\n")
+	cli.Stdin = strings.NewReader("ls\nversions alpha.txt\ncat -n alpha.txt\nmore beta.txt\ndu -sb /\ncd missing\npwd\nexit\n")
 	cli.Stdout, cli.Stderr = &stdout, &stderr
 	if err := cli.Run(); err != nil {
 		t.Fatalf("cli failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 	}
-	for _, expected := range []string{"erwtensoep:/ ", "alpha.txt\nbeta.txt\n", "     1\talpha", "beta", "9\t/\n"} {
+	for _, expected := range []string{"erwtensoep:/ ", "alpha.txt\nbeta.txt\n", "MODIFIED", "/alpha.txt\n", "     1\talpha", "beta", "9\t/\n"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Errorf("cli output missing %q: %s", expected, stdout.String())
 		}

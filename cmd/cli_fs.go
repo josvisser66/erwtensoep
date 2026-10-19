@@ -86,6 +86,10 @@ func (s *archiveShell) absolute(name string) string {
 // Resolve component by component so file/.. is an error, and symlink targets
 // (including absolute targets) are always interpreted inside the archive.
 func (s *archiveShell) resolve(name string, followFinal bool) (*archiveNode, error) {
+	return s.resolveWithSelection(name, followFinal, nil)
+}
+
+func (s *archiveShell) resolveWithSelection(name string, followFinal bool, selectNode func(*archiveNode, bool) (*archiveNode, error)) (*archiveNode, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty path")
 	}
@@ -112,6 +116,13 @@ func (s *archiveShell) resolve(name string, followFinal bool) (*archiveNode, err
 		n := s.nodes[path.Join(current.path, part)]
 		if n == nil {
 			return nil, fmt.Errorf("%s: %w", name, errArchiveNotExist)
+		}
+		if selectNode != nil {
+			var err error
+			n, err = selectNode(n, len(parts) == 0)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if link, ok := n.entry.(*fs.Symlink); ok && (followFinal || len(parts) > 0) {
 			links++

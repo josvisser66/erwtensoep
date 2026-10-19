@@ -19,6 +19,14 @@ func TestShellCompletion(t *testing.T) {
 		{"ca", "cat "},
 		{"r", "rm "},
 		{"help r", "help rm "},
+		{"ver", "versions "},
+		{"help ver", "help versions "},
+		{"versions al", "versions alpha.txt "},
+		{"versions -h /dir/no", "versions -h /dir/note.txt "},
+		{"versions li", "versions link "},
+		{"versions link/no", "versions link/note.txt "},
+		{"versions -- -da", "versions -- -dash "},
+		{`versions "space dir/a`, `versions "space dir/a b.txt" `},
 		{"rm al", "rm alpha.txt "},
 		{"rm -r di", "rm -r dir/"},
 		{"rm li", "rm link "},
@@ -77,6 +85,7 @@ func TestShellCompletion(t *testing.T) {
 	}
 	for _, tc := range []struct{ input, want string }{
 		{"cat no", "cat note.txt "},
+		{"versions no", "versions note.txt "},
 		{"cat ../al", "cat ../alpha.txt "},
 		{"cat /al", "cat /alpha.txt "},
 	} {

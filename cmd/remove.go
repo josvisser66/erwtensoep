@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,12 +12,14 @@ import (
 )
 
 func init() {
+	removeCmd.Flags().Bool("all-versions", false, "Select every saved version without asking which versions to remove")
 	rootCmd.AddCommand(removeCmd)
 }
 
 var removeCmd = &cobra.Command{
 	Use:   "rm [patterns...]",
 	Short: "Remove files from the archive",
+	Long:  "Remove archived versions matching the given paths or patterns.\nChoose from a numbered list when a file has multiple saved versions.\nUse --all-versions to select them all. Confirm the selection before removal.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return errors.New("no remove patterns specified")
@@ -32,25 +34,49 @@ var removeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		out := cmd.OutOrStdout()
 		if len(targets) == 0 {
-			fmt.Println("No matching entries to remove.")
+			fmt.Fprintln(out, "No matching entries to remove.")
 			return nil
 		}
 
-		fmt.Println("The following entries will be removed:")
-		for _, t := range targets {
-			fmt.Println(" -", t)
+		allVersions, err := cmd.Flags().GetBool("all-versions")
+		if err != nil {
+			return err
+		}
+		reader := bufio.NewReader(cmd.InOrStdin())
+		choices, err := selectRemovalVersions(sb, targets, reader, out, allVersions, false)
+		if err != nil {
+			return err
+		}
+		if len(choices) == 0 {
+			fmt.Fprintln(out, "No versions selected for removal.")
+			return nil
+		}
+		if _, err := fmt.Fprintln(out, "The following versions will be removed:"); err != nil {
+			return err
+		}
+		for _, name := range targets {
+			if ids := choices[name]; len(ids) > 0 {
+				if _, err := fmt.Fprintf(out, " - %s (%d of %d saved versions)\n", name, len(ids), len(sb.Entries[name])); err != nil {
+					return err
+				}
+			}
 		}
 
-		fmt.Print("Proceed with removal? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
-		answer, _ := reader.ReadString('\n')
+		if _, err := fmt.Fprint(out, "Proceed with removal? [y/N]: "); err != nil {
+			return err
+		}
+		answer, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
 		answer = strings.TrimSpace(strings.ToLower(answer))
 		if answer != "y" && answer != "yes" {
 			return errors.New("remove canceled")
 		}
 
-		_, err = sb.Remove(args)
+		_, err = sb.RemoveVersions(choices)
 		return err
 	},
 }

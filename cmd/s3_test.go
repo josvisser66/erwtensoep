@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"josvisser.nl/erwtensoep/internal/fs"
@@ -124,6 +125,35 @@ func TestIntegrationS3Archive(t *testing.T) {
 	}
 	if out := run(false, "cat documents/notes.txt\nexit\n", "cli"); !strings.Contains(out, "shared data") {
 		t.Fatalf("CLI read: %s", out)
+	}
+	// A metadata-only version shares the same blob. Removing just that newer
+	// version must persist while leaving both the older entry and copy readable.
+	notePath := filepath.Join(source, "documents/notes.txt")
+	info, err := os.Stat(notePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(notePath, info.ModTime(), info.ModTime().Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	run(false, "", "merge", "--dry-run=false", "--min-size=0", "--max-size=9223372036854775807", source)
+	if out := run(false, "2\n", "ls", "documents/notes.txt"); !strings.Contains(out, "(2 versions)") {
+		t.Fatalf("missing S3 version count: %s", out)
+	}
+	if out := run(false, "cat documents/notes.txt\n2\nexit\n", "cli"); !strings.Contains(out, "Choose version") || !strings.Contains(out, "shared data\n") {
+		t.Fatalf("S3 selected version read: %s", out)
+	}
+	olderDestination := t.TempDir()
+	run(false, "2\n", "restore", "-o", olderDestination, "documents/notes.txt")
+	olderInfo, err := os.Stat(filepath.Join(olderDestination, "documents/notes.txt"))
+	if err != nil || !olderInfo.ModTime().Equal(info.ModTime()) {
+		t.Fatalf("S3 restore did not select older metadata: %v", err)
+	}
+	if out := run(false, "rm documents/notes.txt\n1\ncat documents/notes.txt\nexit\n", "cli"); !strings.Contains(out, "Remove versions (") || !strings.Contains(out, "shared data") {
+		t.Fatalf("S3 partial version removal: %s", out)
+	}
+	if out := run(false, "", "ls", "documents/notes.txt"); strings.Contains(out, "(2 versions)") || !strings.Contains(out, "documents/notes.txt") {
+		t.Fatalf("S3 partial version removal did not persist: %s", out)
 	}
 	if out := run(false, "", "stats"); !strings.Contains(out, "Stored blocks (gzip)") {
 		t.Fatalf("stats: %s", out)

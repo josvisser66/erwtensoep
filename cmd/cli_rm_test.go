@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"josvisser.nl/erwtensoep/internal/fs"
 )
@@ -15,8 +16,9 @@ func TestShellRemoveFilesAndVersions(t *testing.T) {
 	old := *s.sb.Entries["empty"]["v1"].(*fs.RegularFile)
 	old.Path = "alpha.txt"
 	s.sb.Entries["alpha.txt"]["older"] = &old
+	s.in = bufio.NewReader(strings.NewReader("all\n"))
 	got := shellOutput(t, s, out, "rm -v alpha.txt alpha.txt")
-	if got != "removed \"/alpha.txt\" (all saved versions)\n" {
+	if !strings.Contains(got, "Saved versions of") || !strings.HasSuffix(got, "removed \"/alpha.txt\" (all saved versions)\n") {
 		t.Fatalf("verbose output: %q", got)
 	}
 	if _, exists := s.sb.Entries["alpha.txt"]; exists {
@@ -32,6 +34,111 @@ func TestShellRemoveFilesAndVersions(t *testing.T) {
 		t.Fatal("removed a blob still used by empty")
 	}
 	shellOutput(t, s, out, "cat empty")
+}
+
+func addShellRemovalVersion(s *archiveShell, name string) {
+	v := *s.sb.Entries["dir/note.txt"]["v1"].(*fs.RegularFile)
+	v.Path, v.MTime = name, time.Unix(200, 0)
+	s.sb.Entries[name]["v2"] = &v
+	s.nodes = archiveTree(s.sb)
+}
+
+func TestShellRemoveSelectedVersions(t *testing.T) {
+	for _, tc := range []struct {
+		answer, remaining, contents string
+	}{
+		{"1\n", "v1", "alpha\n"},
+		{"2\n", "v2", noteContents},
+		{"0\n3\n1,bad\n1-3\n2-1\n2,2\n", "v2", noteContents},
+	} {
+		t.Run(tc.answer, func(t *testing.T) {
+			s, out := testArchiveShell(t)
+			addShellRemovalVersion(s, "alpha.txt")
+			s.in = bufio.NewReader(strings.NewReader(tc.answer))
+			got := shellOutput(t, s, out, "rm -v alpha.txt")
+			if len(s.sb.Entries["alpha.txt"]) != 1 || s.sb.Entries["alpha.txt"][tc.remaining] == nil {
+				t.Fatalf("wrong versions retained: %v", s.sb.Entries["alpha.txt"])
+			}
+			if !strings.Contains(got, "MODIFIED") || !strings.Contains(got, "v2") || !strings.Contains(got, "1 remaining") {
+				t.Fatalf("missing version list or removal result: %s", got)
+			}
+			if got := shellOutput(t, s, out, "cat alpha.txt"); got != tc.contents {
+				t.Fatalf("latest remaining version unreadable: %q", got)
+			}
+			if got := shellOutput(t, s, out, "ls alpha.txt"); got != "alpha.txt\n" {
+				t.Fatalf("version count not refreshed: %s", got)
+			}
+		})
+	}
+}
+
+func TestShellRemoveVersionChoicesAndFlags(t *testing.T) {
+	for _, tc := range []struct {
+		command, answer string
+		remaining       int
+		picker          bool
+	}{
+		{"rm alpha.txt", "1-2\n", 0, true},
+		{"rm alpha.txt", "ALL\n", 0, true},
+		{"rm alpha.txt", "\n", 2, true},
+		{"rm alpha.txt", "q\n", 2, true},
+		{"rm alpha.txt", "", 2, true},
+		{"rm -fi alpha.txt", "1\n", 1, true},
+		{"rm -if alpha.txt", "", 0, false},
+		{"rm -f alpha.txt", "", 0, false},
+		{"rm --all-versions alpha.txt", "", 0, false},
+		{"rm -i --all-versions alpha.txt", "n\n", 2, false},
+		{"rm --all-versions -i alpha.txt", "y\n", 0, false},
+	} {
+		t.Run(tc.command+tc.answer, func(t *testing.T) {
+			s, out := testArchiveShell(t)
+			addShellRemovalVersion(s, "alpha.txt")
+			s.in = bufio.NewReader(strings.NewReader(tc.answer))
+			got := shellOutput(t, s, out, tc.command)
+			if len(s.sb.Entries["alpha.txt"]) != tc.remaining || strings.Contains(got, "Remove versions (") != tc.picker {
+				t.Fatalf("remaining=%d output=%s", len(s.sb.Entries["alpha.txt"]), got)
+			}
+		})
+	}
+}
+
+func TestShellRemoveVersionCancellationIsAtomic(t *testing.T) {
+	for _, answer := range []string{"1\nq\n", "1\n", "1\ninvalid"} {
+		s, out := testArchiveShell(t)
+		addShellRemovalVersion(s, "alpha.txt")
+		addShellRemovalVersion(s, "empty")
+		s.in = bufio.NewReader(strings.NewReader(answer))
+		shellOutput(t, s, out, "rm alpha.txt empty")
+		if len(s.sb.Entries["alpha.txt"]) != 2 || len(s.sb.Entries["empty"]) != 2 {
+			t.Fatal("canceled selection removed previously selected versions")
+		}
+	}
+}
+
+func TestShellRemoveVersionSelectionKeepsFollowingCommands(t *testing.T) {
+	s, out := testArchiveShell(t)
+	addShellRemovalVersion(s, "alpha.txt")
+	var errs bytes.Buffer
+	s.errOut = &errs
+	s.history = &commandHistory{}
+	s.in = bufio.NewReader(strings.NewReader("rm alpha.txt\n1\ncat alpha.txt\nexit\n"))
+	if err := s.run(); err != nil || errs.Len() != 0 || !strings.Contains(out.String(), "erwtensoep:/ alpha\n") || s.history.Len() != 0 {
+		t.Fatalf("error=%v output=%q diagnostics=%q", err, out.String(), errs.String())
+	}
+}
+
+func TestShellRemoveRecursiveVersionSelection(t *testing.T) {
+	s, out := testArchiveShell(t)
+	addShellRemovalVersion(s, "dir/note.txt")
+	s.in = bufio.NewReader(strings.NewReader("1\n"))
+	shellOutput(t, s, out, "cd dir/sub")
+	shellOutput(t, s, out, "rm -r /dir")
+	if s.cwd != "/dir" || len(s.sb.Entries["dir/note.txt"]) != 1 || s.nodes["/dir/sub"] != nil {
+		t.Fatalf("recursive selection did not preserve selected history: cwd=%s", s.cwd)
+	}
+	if got := shellOutput(t, s, out, "cat note.txt"); got != noteContents {
+		t.Fatalf("retained recursive version unreadable: %q", got)
+	}
 }
 
 func TestShellRemoveGlobsAndLiteralNames(t *testing.T) {

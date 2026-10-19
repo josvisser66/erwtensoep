@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"path/filepath"
 	"sort"
@@ -40,12 +39,13 @@ func (s *archiveShell) rm(args []string) error {
 	f.BoolVarP(&recursive, "recursive-uppercase", "R", false, "Same as -r")
 	_ = f.MarkHidden("recursive-uppercase")
 	verbose := f.BoolP("verbose", "v", false, "Print each removed archive path")
+	allVersions := f.Bool("all-versions", false, "Remove every saved version without a version-selection prompt")
 	promptMode := ""
-	f.VarP(rmPromptFlag{&promptMode, "force"}, "force", "f", "Ignore missing paths and never prompt")
+	f.VarP(rmPromptFlag{&promptMode, "force"}, "force", "f", "Ignore missing paths, remove all versions, and never prompt")
 	f.Lookup("force").NoOptDefVal = "true"
-	f.VarP(rmPromptFlag{&promptMode, "interactive"}, "interactive", "i", "Ask before removing each path and all its versions")
+	f.VarP(rmPromptFlag{&promptMode, "interactive"}, "interactive", "i", "Also confirm single-version paths or --all-versions removals")
 	f.Lookup("interactive").NoOptDefVal = "true"
-	if err := s.parseFlags(f, args, "rm [-rRfiv] PATH... (removes all saved versions; -f/-i: last wins)"); err != nil {
+	if err := s.parseFlags(f, args, "rm [-rRfiv] [--all-versions] PATH... (choose versions when multiple are saved; -f/-i: last wins)"); err != nil {
 		return err
 	}
 	force := promptMode == "force"
@@ -103,32 +103,16 @@ func (s *archiveShell) rm(args []string) error {
 		}
 	}
 	sort.Strings(targets)
-	if promptMode == "interactive" {
-		var confirmed []string
-		for _, name := range targets {
-			if _, err := fmt.Fprintf(s.out, "Remove %q and all %d saved version(s)? [y/N]: ", "/"+filepath.ToSlash(name), len(s.sb.Entries[name])); err != nil {
-				return errors.Join(append(errs, err)...)
-			}
-			// readCommand restores cooked mode before executing commands. Reuse
-			// its buffered reader so confirmations never eat the next command.
-			answer, err := s.in.ReadString('\n')
-			if err != nil && !errors.Is(err, io.EOF) {
-				return errors.Join(append(errs, err)...)
-			}
-			answer = strings.ToLower(strings.TrimSpace(answer))
-			if answer == "y" || answer == "yes" {
-				confirmed = append(confirmed, name)
-			}
-			if errors.Is(err, io.EOF) {
-				break
-			}
-		}
-		targets = confirmed
+	// Cooked-mode prompts share the shell's buffered reader; answers are not
+	// commands and must not consume input belonging to the next command.
+	choices, err := selectRemovalVersions(s.sb, targets, s.in, s.out, *allVersions || force, promptMode == "interactive")
+	if err != nil {
+		return errors.Join(append(errs, err)...)
 	}
-	if len(targets) == 0 {
+	if len(choices) == 0 {
 		return errors.Join(errs...)
 	}
-	removed, err := s.sb.RemovePaths(targets)
+	removed, err := s.sb.RemoveVersions(choices)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -136,7 +120,13 @@ func (s *archiveShell) rm(args []string) error {
 		s.refreshAfterRemoval()
 		if *verbose {
 			for _, name := range targets {
-				fmt.Fprintf(s.out, "removed %q (all saved versions)\n", "/"+filepath.ToSlash(name))
+				if ids := choices[name]; len(ids) > 0 {
+					if remaining := len(s.sb.Entries[name]); remaining == 0 {
+						fmt.Fprintf(s.out, "removed %q (all saved versions)\n", "/"+filepath.ToSlash(name))
+					} else {
+						fmt.Fprintf(s.out, "removed %q (%d version(s); %d remaining)\n", "/"+filepath.ToSlash(name), len(ids), remaining)
+					}
+				}
 			}
 		}
 	}

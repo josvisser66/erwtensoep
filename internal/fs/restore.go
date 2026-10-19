@@ -3,19 +3,55 @@ package fs
 import (
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
-// Restore extracts files and symlinks that match the provided patterns into outDir.
+// Restore extracts the newest versions matching patterns into outDir, without
+// prompting. Use RestoreVersions to restore explicitly selected older versions.
 func (sb *Superblock) Restore(patterns []string, outDir string) (int, error) {
-	if len(patterns) == 0 {
-		return 0, errors.New("no restore patterns specified")
+	paths, err := sb.RestoreTargets(patterns)
+	if err != nil {
+		return 0, err
 	}
+	selected := make(map[string]string, len(paths))
+	for _, name := range paths {
+		selected[name] = latestVersionID(sb.Entries[name])
+	}
+	return sb.RestoreVersions(selected, outDir)
+}
+
+// RestoreTargets returns matching index paths in sorted order.
+func (sb *Superblock) RestoreTargets(patterns []string) ([]string, error) {
+	if len(patterns) == 0 {
+		return nil, errors.New("no restore patterns specified")
+	}
+	return sb.matchingPaths(patterns), nil
+}
+
+func (sb *Superblock) matchingPaths(patterns []string) []string {
+	normalized := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		normalized = append(normalized, normalizePattern(p))
+	}
+	var paths []string
+	for name := range sb.Entries {
+		if matchesAnyPattern(filepath.ToSlash(name), normalized) {
+			paths = append(paths, name)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// RestoreVersions restores one selected version ID per exact index path.
+// Validate the entire selection before writing any output. Selection and
+// cancellation belong to the caller; library operations never prompt.
+func (sb *Superblock) RestoreVersions(selected map[string]string, outDir string) (int, error) {
 	if outDir == "" {
 		return 0, errors.New("output directory not specified")
 	}
@@ -25,29 +61,26 @@ func (sb *Superblock) Restore(patterns []string, outDir string) (int, error) {
 		return 0, err
 	}
 
-	normalized := make([]string, 0, len(patterns))
-	for _, p := range patterns {
-		normalized = append(normalized, normalizePattern(p))
-	}
-
-	selected := make(map[string]Entry)
-	for path, versions := range sb.Entries {
-		entryPath := filepath.ToSlash(path)
-		if !matchesAnyPattern(entryPath, normalized) {
-			continue
-		}
-		selected[entryPath] = latestVersion(versions)
-	}
-
 	paths := make([]string, 0, len(selected))
-	for p := range selected {
+	entries := make(map[string]Entry, len(selected))
+	for p, id := range selected {
+		entry, ok := sb.Entries[p][id].(Entry)
+		if !ok || entry.GetPath() != p {
+			return 0, fmt.Errorf("%s: invalid saved version %s", p, id)
+		}
+		switch entry.(type) {
+		case *RegularFile, *Symlink:
+		default:
+			return 0, fmt.Errorf("%s: unknown entry type", p)
+		}
+		entries[p] = entry
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
 
 	restored := 0
 	for _, p := range paths {
-		entry := selected[p]
+		entry := entries[p]
 		switch e := entry.(type) {
 		case *RegularFile:
 			if err := sb.restoreRegularFile(e, outDir); err != nil {
@@ -66,21 +99,24 @@ func (sb *Superblock) Restore(patterns []string, outDir string) (int, error) {
 	return restored, nil
 }
 
-func latestVersion(versions map[string]interface{}) Entry {
+func latestVersionID(versions map[string]interface{}) string {
 	var (
 		maxEntry Entry
-		maxTime  time.Time
+		maxID    string
 	)
 
-	for _, v := range versions {
-		e := v.(Entry)
-		if t := e.GetFileStats().MTime; t.After(maxTime) {
-			maxTime = t
-			maxEntry = e
+	for id, v := range versions {
+		e, ok := v.(Entry)
+		if !ok {
+			continue
+		}
+		if maxEntry == nil || e.GetFileStats().MTime.After(maxEntry.GetFileStats().MTime) ||
+			(e.GetFileStats().MTime.Equal(maxEntry.GetFileStats().MTime) && id > maxID) {
+			maxEntry, maxID = e, id
 		}
 	}
 
-	return maxEntry
+	return maxID
 }
 
 func normalizePattern(pattern string) string {
