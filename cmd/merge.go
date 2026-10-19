@@ -16,11 +16,12 @@ func init() {
 }
 
 var mergeCmd = &cobra.Command{
-	Use:   "merge",
-	Short: "Merge a source directory into the archive",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Use:   "merge SOURCE...",
+	Short: "Merge directories or the contents of tar archives",
+	Long:  "Merge one or more source directories, .tar, .tar.gz, or .tgz files.\nExplicit tar sources are expanded into archive entries, with a WARNING;\nthe tar file itself is not stored. Tar files within directories remain files.",
+	RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 		if len(args) == 0 {
-			return errors.New("no source directories specified")
+			return errors.New("no sources specified")
 		}
 
 		sb, err := fs.GetSuperblock(&options)
@@ -29,29 +30,26 @@ var mergeCmd = &cobra.Command{
 		}
 
 		var totalChanges, totalErrors int
+		defer func() {
+			// Keep completed imports even if a later source fails validation.
+			if totalChanges > 0 {
+				resultErr = errors.Join(resultErr, sb.Write())
+			}
+		}()
 
 		for _, arg := range args {
 			fmt.Println(arg)
 			c, e, err := sb.Merge(arg)
+			totalChanges += c
+			totalErrors += e
+			fmt.Printf("Result for %s: %d changes, %d errors\n", arg, c, e)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Result for %s: %d changes, %d errors\n", arg, c, e)
-			totalChanges += c
-			totalErrors += e
 		}
 
 		if len(args) > 1 {
 			fmt.Printf("Overall result: %d changes, %d errors\n", totalChanges, totalErrors)
-		}
-
-		if totalChanges > 0 {
-			// Persist only when there were changes to avoid unnecessary rewrites.
-			if err := sb.Write(); err != nil {
-				// The on disk block cache is tainted but the on-disk superblock
-				// file does not reflect this. Time for garbage collection :-)
-				return err
-			}
 		}
 
 		return nil

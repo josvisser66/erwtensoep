@@ -52,23 +52,26 @@ func (sb *Superblock) mergeSymlink(fullPath string, info os.FileInfo, relativePa
 		Target:    target,
 		Path:      relativePath,
 	}
+	return sb.mergeSymlinkEntry(sl)
+}
+
+func (sb *Superblock) mergeSymlinkEntry(sl *Symlink) (int, error) {
 	h := sl.hash()
-	entries, ok := sb.Entries[relativePath]
-	if !ok {
-		fmt.Printf("%s -> %s\n", fullPath, sl.Target)
-		sb.Entries[relativePath] = make(map[string]interface{})
-		sb.Entries[relativePath][h] = sl
-		return 1, sb.jsonWrite(sb.entriesDir, h, sl)
-	}
+	entries := sb.Entries[sl.Path]
 
 	if _, ok := entries[h]; ok {
 		return 0, nil
 	}
 
-	if sb.options.DryRun {
-		return 1, nil
+	fmt.Printf("%s -> %s\n", sl.Path, sl.Target)
+	if err := sb.jsonWrite(sb.entriesDir, h, sl); err != nil {
+		return 0, err
+	}
+	if entries == nil {
+		entries = make(map[string]interface{})
+		sb.Entries[sl.Path] = entries
 	}
 
 	entries[h] = sl
-	return 1, sb.jsonWrite(sb.entriesDir, h, sl)
+	return 1, nil
 }

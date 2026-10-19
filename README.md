@@ -31,6 +31,37 @@ See [S3 setup and provider examples](docs/user-manual.md#use-s3-compatible-stora
 and the [sample S3 configuration](erwtensoep-s3.json). Credentials are not stored
 in the configuration or archive.
 
+## Merging tar archives
+
+Pass one or more `.tar`, `.tar.gz`, or `.tgz` files as merge sources to import
+their contents. You can mix tar sources and directories in the same command:
+
+```sh
+erwtensoep -a /path/to/archive merge backup.tar another.tar.gz third.tgz /path/to/source
+```
+
+For every explicitly named tar source, erwtensoep prints a warning on stderr:
+
+```text
+WARNING: merging files from tar archive "backup.tar"; the tar file itself will not be archived.
+```
+
+Members retain their paths inside the tar; the tar filename is not prepended.
+Nothing is extracted onto the host filesystem. File contents use the normal
+block sharing, compression, and saved-version rules. Modes, modification times,
+and owner/group metadata come from tar headers. Symlinks retain their targets;
+hard links become regular-file entries sharing their target's data.
+
+Size limits, `--dry-run`, and regular `.erwtensoep` exclusion files inside the tar
+are honored. The complete input is checked first, then read again for import,
+so exclusions work regardless of member order and damaged tar/gzip input is
+reported before importing that source. Unsafe member paths are rejected.
+Empty directories are not stored; unsupported special members are skipped with
+a warning. Only explicitly named tar sources are expanded: a tar file inside
+a source directory, or inside another tar, is stored as a regular file. Both
+local and S3 archive destinations support tar imports. See the
+[tar import task](docs/user-manual.md#import-files-from-tar-archives) for details.
+
 ## Checking and repairing an archive
 
 ```sh

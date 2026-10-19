@@ -53,6 +53,7 @@ erwtensoep/
 | [`internal/fs/superblock.go`](../internal/fs/superblock.go), `options.go`, `storage.go` | Index lifecycle, serialization, options, default backend. |
 | `internal/fs/block.go`, `blob.go`, `regularfile.go`, `symlink.go`, `filestats.go` | Object types, IDs, source metadata, file ingestion. |
 | `internal/fs/merge.go`, `read.go`, `restore.go`, `remove.go`, `stats.go` | Archive operations. |
+| `internal/fs/merge_tar.go` | Tar/gzip source validation, exclusion discovery, metadata conversion, hard-link resolution, and streamed member import. |
 | [`internal/fs/fsck.go`](../internal/fs/fsck.go), [`fsck_objects.go`](../internal/fs/fsck_objects.go) | Inspection, validation, repair planning, and repair execution. |
 | `internal/fs/verify.go`, `rebuild.go` | Earlier presence/gzip verifier and separate index reconstruction. |
 | [`internal/storage/backend.go`](../internal/storage/backend.go), `local.go`, [`s3.go`](../internal/storage/s3.go), `memory.go`, `path.go`, `inventory.go` | Object operations, local/S3 fan-out mapping, memory backend, key validation, inventory/pruning. |
@@ -161,7 +162,8 @@ fields `owner`, `group`, `size`, `mode`, and `mtime`. A symlink replaces `blob_i
 with `target`. There is no separate JSON type discriminator: these fields
 identify the concrete type.
 
-Owner/group are names looked up from source UID/GID, not persisted numeric IDs.
+For directory sources, owner/group are names looked up from source UID/GID.
+Tar sources use header `Uname`/`Gname`, falling back to decimal UID/GID strings.
 File and blob sizes are decimal strings to avoid JSON number precision loss.
 `mode` is the numeric Go `fs.FileMode`, including type bits; `mtime` is a time
 string. Private parsed-size caches are not serialized.
@@ -361,8 +363,15 @@ object replacement does not make index and data updates transactional.
 
 ## Merge pipeline
 
-The command loads the superblock, calls `Merge` for each source directory, and
-writes the index after reported changes. The recursive walker:
+The command loads the superblock and calls `Merge` for each source argument.
+`Merge` stats the source: directories use the recursive walker; regular files
+with case-insensitive `.tar`, `.tar.gz`, or `.tgz` suffixes use the tar importer.
+Other standalone files are rejected. An explicit tar source prints a `WARNING`
+on stderr explaining that its members, rather than the container, will be
+archived. Detection occurs only at the source boundary: the directory walker
+and tar importer do not recursively expand tar files they encounter. The
+command defers its final index write when there are reported changes, preserving
+completed entries even when a later source returns an error. The recursive walker:
 
 1. Resolves the source root to an absolute host path and checks for archive
    directories to skip.
@@ -378,12 +387,61 @@ writes the index after reported changes. The recursive walker:
    It hashes the ordered block IDs into a blob ID, writes the blob descriptor,
    then writes the entry record and updates the in-memory index.
 
+Both source kinds share `mergeRegularEntry` and `mergeSymlinkEntry` for metadata
+version checks and entry writes. `blobifyReader` reads an `io.Reader` with
+`io.ReadFull`, giving fixed 1 MiB block boundaries plus a final partial block.
+This makes blob IDs independent of gzip/tar reader chunk sizes and preserves
+sharing with directory imports. The total payload length must match the saved
+file size before a blob descriptor is accepted. File contents remain streamed;
+only block buffers and metadata are held in memory.
+
+### Tar sources
+
+`mergeTar` opens a local source once and seeks it back to the start for two
+passes. `readTar` wraps `.tar.gz`/`.tgz` input in `gzip.Reader`, then uses
+`archive/tar.Reader` for headers and member payloads. Every payload is consumed,
+including skipped members, and the decompressed stream is drained past tar EOF
+to validate the gzip trailer. The reader checks the merge cancellation flag.
+
+The first pass retains member headers and reads regular `.erwtensoep` payloads
+into a directory-to-pattern map. Names are normalized with POSIX path rules;
+absolute names, NULs, and any `..` component are rejected. A `.` directory
+header is accepted but does not become an entry. Symlink target text is retained
+without host filesystem resolution. No member is ever extracted to a host path.
+
+Hard links bind to the most recent preceding target with that name, or the
+first subsequent one if the target has not yet appeared. Chains are resolved to
+regular members; missing targets, cycles, and targets of other types are errors
+for included links. After the full stream validates, inherited exclusion rules
+are evaluated independently of header order. The last regular `.erwtensoep`
+member at a directory determines its rules. Needed payloads include data for
+included hard links whose target path is excluded. Already-saved aliases do not
+cause excluded target data to be written unnecessarily.
+
+The second pass checks that headers still match the first pass and streams
+needed regular members into the ordinary block/blob pipeline. Tar metadata uses
+header permissions, mtime, and owner/group names (or numeric strings). Symlink
+size is the target-text length. Hard links are written after their payloads are
+available, as regular entries using the link header's metadata and target's
+logical size and blob ID. The backend requires no tar-specific changes.
+Directories are implicit; unsupported special members are skipped with a warning.
+
+Preflight validation avoids importing a tar already damaged at the start, but
+does not make the operation transactional or snapshot a changing source. Backend
+errors, interruption, or source changes during import can leave partial results
+and unreferenced objects, just as a directory merge can. Headers, exclusion-file
+contents, and hard-link relationships consume memory proportional to the input
+metadata. Tar payloads are read twice, and gzip inputs are decompressed twice.
+
+### Checkpoints and interruption
+
 The buffer pool has a mutex, but the archive maps themselves are not protected
 for simultaneous merge operations. On-disk block existence checks do not
 rehash existing contents. `fsck` is the path for full content validation.
 
 `dataWrite` tracks uncompressed bytes written for objects, including descriptor
-JSON. `maybeWrite` checks the threshold after processing regular files. The
+JSON. `maybeWrite` checks the threshold after directory-source regular files and
+tar members, including completed hard links. The
 default CLI threshold is 1,000,000,000 bytes, not 1 GiB. `Write` increments the
 generation, sets the time, gzip-encodes the index, and resets the threshold
 counter after success. If the index was loaded from disk, it attempts a
@@ -391,8 +449,9 @@ best-effort backup to `<index-name>.bak`; backup errors on this normal path
 are not propagated.
 
 Dry-run mode changes in-memory working state but suppresses object/index
-writes. SIGINT/SIGTERM sets an atomic cancellation flag checked by directory
-and file loops. This is cooperative stopping, not a rollback of the merge.
+writes. SIGINT/SIGTERM sets an atomic cancellation flag checked by directory,
+file, and tar-read loops. Each `Merge` unregisters its signal channel and stops
+its signal-waiting goroutine on return. This is cooperative stopping, not a rollback of the merge.
 Objects written before an interruption or index-write failure can be absent
 from the saved index, which fsck can detect.
 
@@ -713,6 +772,7 @@ go test ./internal/storage ./internal/fs ./cmd -run S3
 | Test area | Important behaviors |
 | --- | --- |
 | `internal/fs/backup_test.go`, `restore_test.go`, `rebuild_test.go` | Versions, sharing, restoration patterns, independent index reconstruction. |
+| `internal/fs/merge_tar_test.go`, `cmd/merge_tar_test.go` | Tar/gzip formats, metadata, hard links, exclusion order, size limits, dry runs, damaged/unsafe sources, fixed block boundaries, warnings, mixed sources, and local/S3 round trips. |
 | `internal/fs/read_test.go` | Streaming across blocks, early close, missing/corrupt content. |
 | `internal/fs/remove*_test.go`, `cmd/remove_versions_test.go` | Partial/all-version removal, shared data retention, exact paths, persistence, cancellation, dry run, failed index writes and prompt I/O. |
 | `internal/fs/stats_test.go`, `cmd/stats_test.go` | Sharing calculations, stored sizes, compression expansion, report formatting. |

@@ -66,13 +66,19 @@ func FromJsonRF(o map[string]interface{}) *RegularFile {
 }
 
 func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
-	sw := utils.NewStopwatch("")
-	fmt.Printf("%s [%s bytes]\n", path, humanize.Comma(rf.size))
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	return rf.blobifyReader(sb, f)
+}
+
+// Full block reads keep content addressing independent of the source reader's
+// chunk sizes (local files, gzip streams, or tar members).
+func (rf *RegularFile) blobifyReader(sb *Superblock, source io.Reader) (*Blob, error) {
+	sw := utils.NewStopwatch("")
+	fmt.Printf("%s [%s bytes]\n", rf.Path, humanize.Comma(rf.size))
 
 	buf := bufPool.Get()
 	defer bufPool.Put(buf)
@@ -85,19 +91,18 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 
 	// The blob ID is derived from the sequence of block IDs to make it content-addressed.
 	blobIDHash := crc64.New(crc64.MakeTable(crc64.ECMA))
-	var n int
 	var countBytesRead int64
 
-	for err != io.EOF {
+	for {
 		if sb.sigReceived.Load() {
 			return nil, errors.New("signal received")
 		}
 		fmt.Printf("%d\r", countBytesRead)
-		if n, err = f.Read(buf); err != nil && err != io.EOF {
+		n, err := io.ReadFull(source, buf)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return nil, err
 		} else if n == 0 {
-			// EOF coming up...
-			continue
+			break
 		}
 
 		countBytesRead += int64(n)
@@ -127,6 +132,12 @@ func (rf *RegularFile) blobify(sb *Superblock, path string) (*Blob, error) {
 		}
 		blob.Blocks = append(blob.Blocks, id)
 		blobIDHash.Write([]byte(block.ID))
+		if err != nil {
+			break
+		}
+	}
+	if countBytesRead != rf.size {
+		return nil, fmt.Errorf("%s: read %d bytes, expected %d", rf.Path, countBytesRead, rf.size)
 	}
 
 	fmt.Printf("%d bytes took %s (%s/sec)\n", countBytesRead, sw.Elapsed(), humanize.Bytes(uint64(float64(countBytesRead)/sw.Elapsed().Seconds())))
@@ -151,41 +162,40 @@ func (rf *RegularFile) hash() string {
 }
 
 func (sb *Superblock) mergeRegularfile(fullPath string, info os.FileInfo, relativePath string) (int, error) {
-	size := info.Size()
-	if size < sb.options.MinSize || size > sb.options.MaxSize {
-		fmt.Printf("%s skipped: Size %d not in [%d, %d]\n", relativePath, size, sb.options.MinSize, sb.options.MaxSize)
+	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}
+	return sb.mergeRegularEntry(rf, func() (*Blob, error) { return rf.blobify(sb, fullPath) })
+}
+
+func (sb *Superblock) mergeRegularEntry(rf *RegularFile, readBlob func() (*Blob, error)) (int, error) {
+	if rf.size < sb.options.MinSize || rf.size > sb.options.MaxSize {
+		fmt.Printf("%s skipped: Size %d not in [%d, %d]\n", rf.Path, rf.size, sb.options.MinSize, sb.options.MaxSize)
 		return 0, nil
 	}
-	rf := &RegularFile{Path: relativePath, FileStats: newFileStats(info)}
 	ID := rf.hash()
-	versions, ok := sb.Entries[relativePath]
-	if !ok {
-		// File does not exist in the metadata at all.
-		if blob, err := rf.blobify(sb, fullPath); err != nil {
-			return 0, err
-		} else {
-			rf.BlobID = blob.ID
-		}
-		sb.Entries[relativePath] = make(map[string]interface{})
-		sb.Entries[relativePath][ID] = rf
-		return 1, sb.jsonWrite(sb.entriesDir, ID, rf)
-	}
-
-	if _, ok := versions[ID]; ok {
+	versions := sb.Entries[rf.Path]
+	if existing, ok := versions[ID].(*RegularFile); ok {
 		// File exists, and _this_ version exists.
 		// We assume that if the mtime did not change, the content did not change either.
 		// TODO: Make this an option to override this behavior so that we
 		// can rewrite the entire archive.
+		rf.BlobID = existing.BlobID
 		return 0, nil
 	}
 
 	// New version.
-	if blob, err := rf.blobify(sb, fullPath); err != nil {
+	if blob, err := readBlob(); err != nil {
 		return 0, err
 	} else {
 		rf.BlobID = blob.ID
 	}
 
+	if err := sb.jsonWrite(sb.entriesDir, ID, rf); err != nil {
+		return 0, err
+	}
+	if versions == nil {
+		versions = make(map[string]interface{})
+		sb.Entries[rf.Path] = versions
+	}
 	versions[ID] = rf
-	return 1, sb.jsonWrite(sb.entriesDir, ID, rf)
+	return 1, nil
 }

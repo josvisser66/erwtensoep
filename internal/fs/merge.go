@@ -150,6 +150,17 @@ func (sb *Superblock) Merge(srcDir string) (changes int, errors int, err error) 
 	if err != nil {
 		return 0, 1, err
 	}
+	info, err := os.Stat(sb.srcDir)
+	if err != nil {
+		return 0, 1, err
+	}
+	tarSource := !info.IsDir() && isTarSource(sb.srcDir)
+	if !info.IsDir() && (!info.Mode().IsRegular() || !tarSource) {
+		return 0, 1, fmt.Errorf("%s: source must be a directory or a .tar, .tar.gz, or .tgz file", srcDir)
+	}
+	if tarSource {
+		fmt.Fprintf(os.Stderr, "WARNING: merging files from tar archive %q; the tar file itself will not be archived.\n", srcDir)
+	}
 
 	defer func() {
 		fmt.Printf("Total bytes written: %s\n", humanize.Comma(int64(sb.totalBytesWritten)))
@@ -158,13 +169,21 @@ func (sb *Superblock) Merge(srcDir string) (changes int, errors int, err error) 
 	// Stop processing cleanly on SIGINT/SIGTERM to reduce archive corruption risk.
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+	done := make(chan struct{})
+	defer func() { signal.Stop(ch); close(done) }()
 
 	go func() {
-		sig := <-ch
-		fmt.Println("\nReceived signal:", sig)
-		fmt.Println("Please wait for the program to end to prevent archive corruption...")
-		sb.sigReceived.Store(true)
+		select {
+		case sig := <-ch:
+			fmt.Println("\nReceived signal:", sig)
+			fmt.Println("Please wait for the program to end to prevent archive corruption...")
+			sb.sigReceived.Store(true)
+		case <-done:
+		}
 	}()
 
+	if tarSource {
+		return sb.mergeTar(sb.srcDir)
+	}
 	return sb.walkDir(sb.srcDir, nil)
 }

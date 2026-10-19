@@ -5,7 +5,7 @@
 erwtensoep stores files in a local directory or S3-compatible object storage.
 It keeps saved versions,
 shares identical file contents and data blocks, and compresses stored objects
-with gzip. You can merge source directories, browse archived files, restore
+with gzip. You can merge source directories or tar contents, browse archived files, restore
 them, remove paths, and check or repair the archive.
 
 ## Contents
@@ -63,6 +63,11 @@ Merging `/home/alice/work` stores `/home/alice/work/documents/notes.txt` as
 several source directories places their contents in the same archive namespace;
 matching relative paths become versions of the same path. To retain a parent
 directory name, merge its parent, or use a separate archive for each source.
+
+Explicit `.tar`, `.tar.gz`, and `.tgz` sources contribute their member paths,
+also without a source filename prefix. A member named `./documents/notes.txt`
+becomes `documents/notes.txt`. Sources share the same archive namespace, so
+matching paths from different tar files can add versions of the same file.
 
 Regular files and symbolic links are stored. Directories are inferred from file
 paths, so empty directories and original directory metadata are absent. Sockets,
@@ -198,7 +203,7 @@ To avoid repeating connection options, merge settings like these into
 ```
 
 Then `erwtensoep merge SOURCE`, `erwtensoep cli`, and other commands use that
-archive. Restore's output directory and merge's source directories remain local
+archive. Restore's output directory and merge's source directories or tar files remain local
 host paths. `--storage-backend s3` is optional and requires an S3 archive URL.
 An older configuration with `"storage-backend": "local"` does not prevent an
 explicit S3 URL from selecting S3.
@@ -231,6 +236,62 @@ S3 usage differs from local disk usage:
 - Use only one archive writer at a time. S3 does not add an
   archive lock or make a multi-object update transactional. Keep it idle during
   `fsck` and `rebuild` as with local storage.
+
+### Import files from tar archives
+
+Supply one or more local tar files as merge arguments. Supported filename
+suffixes are `.tar`, `.tar.gz`, and `.tgz`, matched without case sensitivity.
+No additional flag is required. Tar sources and directories can be mixed:
+
+```sh
+erwtensoep -a "$HOME/archives/work" merge backup.tar photos.tar.gz documents.tgz
+erwtensoep -a "$HOME/archives/work" merge backup.tar "$HOME/current-files"
+erwtensoep -a "$HOME/archives/work" merge --dry-run backup.tar.gz
+```
+
+For each explicit tar source, including in dry runs, stderr contains:
+
+```text
+WARNING: merging files from tar archive "backup.tar"; the tar file itself will not be archived.
+```
+
+Erwtensoep reads member contents directly into its archive storage; it does not
+extract temporary files or create the member paths on your host. The tar's own
+filename is not added to the saved path. Prefixes such as `./` are normalized,
+while absolute member names and names containing a `..` component are rejected.
+A directory whose name ends in `.tar` still behaves as a directory source.
+
+Regular files retain their tar permissions and modification times. Owner/group
+names come from the header; absent names become decimal UID/GID strings.
+Symlink targets are stored literally and are never followed during import.
+Hard links, including links whose targets appear later, become regular files
+sharing the target's content. Their targets must resolve to a regular member
+within the same tar; missing targets and cycles are errors. Hard-link identities
+are not recreated when restoring. Empty directories, ACLs, and extended
+attributes are not represented. Device files, FIFOs, and other unsupported
+special members are skipped with a warning.
+
+`--min-size` and `--max-size` apply to each member's logical file size, including
+hard links, rather than the tar file's size. Regular `.erwtensoep` members apply
+the same inherited basename exclusion rules as source directories, even when
+they appear after the files they exclude. These control files are themselves
+eligible for import unless excluded or outside the size limits. If a directory
+contains several `.erwtensoep` members, the last one's rules apply to the whole
+tar source. Symlink and hard-link `.erwtensoep` members are not read as rules.
+An included hard link may still import data from a target excluded by name.
+
+Tar input is read twice: first to validate it and collect exclusion rules, then
+to import contents. This also checks gzip checksums and truncated input before
+the first archive write for that source. Keep source files unchanged during
+the operation. An import can still be partial if a storage failure, interruption,
+or source change occurs during the second pass. Completed imports from earlier
+sources are saved if a later source fails; the command returns an error.
+
+Only tar files explicitly passed as sources are expanded. A tar found while
+walking a directory, or a tar member within another tar, is stored as an ordinary
+file. To store a tar container itself, merge its containing directory. Restore,
+CLI browsing, version selection, and sharing work normally for imported entries,
+whether the erwtensoep archive is stored locally or on S3.
 
 ### Preview or limit a merge
 
@@ -465,9 +526,12 @@ The options below are in addition to global options and `--help`.
 
 ### `merge SOURCE...`
 
-Add files and symlinks from one or more source directories. New metadata
-versions are retained alongside earlier ones; matching metadata is skipped.
-Source paths are host paths. At least one source is required.
+Add files and symlinks from one or more source directories or the contents of
+explicit `.tar`, `.tar.gz`, and `.tgz` files. Print a `WARNING` for every tar
+source to explain that its contents will be imported. New metadata versions are
+retained alongside earlier ones; matching metadata is skipped. Source paths are
+local host paths. At least one source is required; ordinary standalone files
+are not accepted as sources. See [tar imports](#import-files-from-tar-archives).
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -476,7 +540,8 @@ Source paths are host paths. At least one source is required.
 | `--dry-run` | `false` | Process without writing archive objects or the index. |
 | `--sb-write-threshold BYTES` | `1000000000` | Flush the index after this many uncompressed object bytes have been written. |
 
-A final index write occurs when the command reports changes. The threshold is
+A final index write occurs when the command reports changes, including completed
+work before a later source error. The threshold is
 not a compressed disk-space limit. See [merge tasks](#create-an-archive-and-add-files)
 and [exclusion rules](#preview-or-limit-a-merge).
 
@@ -863,6 +928,7 @@ moves to its nearest surviving ancestor.
 | S3 signing or access error | Check both credential environment variables, any stale session token, bucket permissions, and the endpoint/signing region. |
 | S3 removal does not reduce provider usage | Check retained object versions and lifecycle/retention settings; erwtensoep removes current objects, not historical provider versions. |
 | Files appear under unexpected paths | Source roots are stripped during merge; multiple sources share one namespace. |
+| A tar source expands instead of being stored as a file | Explicit `.tar`, `.tar.gz`, and `.tgz` sources import their members and print a warning. Merge the containing directory to store the tar file itself. |
 | An updated file was skipped | Merge identifies versions from metadata. Check size and modification time. |
 | A glob matches too little | Top-level patterns match whole paths and `*` does not cross `/`; use a directory name for its subtree. |
 | `ls -l` fails | Start `cli` for Unix-style listing flags; top-level `ls` has fixed output. |
