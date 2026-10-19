@@ -1,4 +1,4 @@
-# erwtensoep
+# erwtensoep — a homegrown backup tool
 
 Build with `make build` and run tests with `make test`.
 
