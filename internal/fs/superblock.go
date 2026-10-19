@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -157,11 +156,9 @@ func GetSuperblock(options *Options) (sb *Superblock, err error) {
 	sw := utils.NewStopwatch("Reading the superblock")
 	defer sw.Stop()
 
-	options.ArchiveDir, err = filepath.Abs(options.ArchiveDir)
-	if err != nil {
+	if err = ensureStorage(options); err != nil {
 		return nil, err
 	}
-	ensureStorage(options)
 	sbFile := "superblock.json.gz"
 	var fin io.ReadCloser
 	if fin, err = options.Storage.GetBlob(sbFile); err != nil {

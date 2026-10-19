@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -114,12 +113,9 @@ func CheckArchive(options *Options, progress func(phase string, count, total int
 		return nil, fmt.Errorf("archive-dir is required")
 	}
 	opts := *options
-	var err error
-	opts.ArchiveDir, err = filepath.Abs(opts.ArchiveDir)
-	if err != nil {
+	if err := ensureStorage(&opts); err != nil {
 		return nil, err
 	}
-	ensureStorage(&opts)
 	r := &CheckReport{sb: newSuperblock(&opts), newEntries: make(map[string]Entry), remove: make(map[string]bool)}
 	index, err := r.readIndex()
 	if err != nil {

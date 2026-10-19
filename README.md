@@ -9,6 +9,28 @@ Build with `make build` and run tests with `make test`.
 - [Technical manual](docs/technical-manual.md): repository structure, archive
   format, implementation, storage, integrity checking, and development.
 
+## S3-compatible storage
+
+An `s3://bucket/prefix` archive selects S3 storage automatically. Set
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the environment, then provide
+the provider's service endpoint and signing region:
+
+```sh
+erwtensoep -a s3://your-bucket/erwtensoep/work \
+  --endpoint-url https://s3.us-east-1.amazonaws.com --region us-east-1 \
+  merge /path/to/source
+```
+
+The endpoint is required, including for AWS. `--endpoint_url` is an alias;
+the JSON configuration key is `endpoint_url`. AWS, IDrive e2, Backblaze B2,
+Wasabi, and other compatible services use the same backend with their own
+endpoint and credentials. Buckets must already exist. All archive commands
+work with the S3 location, including `cli`, `stats`, and `fsck`.
+
+See [S3 setup and provider examples](docs/user-manual.md#use-s3-compatible-storage)
+and the [sample S3 configuration](erwtensoep-s3.json). Credentials are not stored
+in the configuration or archive.
+
 ## Checking and repairing an archive
 
 ```sh

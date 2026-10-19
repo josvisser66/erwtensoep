@@ -11,11 +11,14 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"josvisser.nl/erwtensoep/internal/storage"
 )
 
 type config struct {
 	ArchiveDir     *string `json:"archive-dir"`
 	StorageBackend *string `json:"storage-backend"`
+	EndpointURL    *string `json:"endpoint_url"`
+	Region         *string `json:"region"`
 	MinSize        *int64  `json:"min-size"`
 	MaxSize        *int64  `json:"max-size"`
 	DryRun         *bool   `json:"dry-run"`
@@ -102,6 +105,8 @@ func applyConfigSection(cmd *cobra.Command, cfg *config) {
 
 	setIfNotChanged(cmd, "archive-dir", cfg.ArchiveDir)
 	setIfNotChanged(cmd, "storage-backend", cfg.StorageBackend)
+	setIfNotChanged(cmd, "endpoint-url", cfg.EndpointURL)
+	setIfNotChanged(cmd, "region", cfg.Region)
 	setIfNotChanged(cmd, "min-size", cfg.MinSize)
 	setIfNotChanged(cmd, "max-size", cfg.MaxSize)
 	setIfNotChanged(cmd, "dry-run", cfg.DryRun)
@@ -160,6 +165,16 @@ func ensureArchiveDir(cmd *cobra.Command) error {
 	}
 	if options.ArchiveDir == "" {
 		return errors.New("archive-dir is required")
+	}
+	if storage.IsS3Archive(options.ArchiveDir) {
+		_, _, err := storage.ParseS3Archive(options.ArchiveDir)
+		return err // S3 buckets must already exist; never create a local s3: tree.
+	}
+	if strings.Contains(options.ArchiveDir, "://") {
+		return errors.New("unsupported archive URL scheme")
+	}
+	if strings.EqualFold(backend, "s3") {
+		return errors.New("S3 storage requires archive-dir in the form s3://bucket/prefix")
 	}
 
 	if _, err := os.Stat(options.ArchiveDir); err == nil {

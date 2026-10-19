@@ -1,6 +1,6 @@
 {
   "archive-dir": "/path/to/archive",
-  "storage-backend": "local",
+  "storage-backend": "auto",
   "merge": {
     "min-size": 0,
     "max-size": 9223372036854775807,

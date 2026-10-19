@@ -31,10 +31,12 @@ erwtensoep/
 ├── internal/
 │   ├── fs/              Archive model, operations, validation, tests
 │   ├── storage/         Object-storage interface and backends, tests
+│   ├── testutil/s3test/  Local S3 HTTP fixture shared by tests
 │   └── utils/           Stopwatch/output helper
 ├── docs/                User and technical manuals
 ├── bin/                 Local build output; ignored by Git
 ├── erwtensoep.json      Example configuration
+├── erwtensoep-s3.json   Example S3 configuration, without credentials
 ├── go.mod, go.sum       Module definition and dependency checksums
 ├── Makefile             Build, test, and vet targets
 ├── README.md            Project entry point and feature overview
@@ -53,14 +55,16 @@ erwtensoep/
 | `internal/fs/merge.go`, `read.go`, `restore.go`, `remove.go`, `stats.go` | Archive operations. |
 | [`internal/fs/fsck.go`](../internal/fs/fsck.go), [`fsck_objects.go`](../internal/fs/fsck_objects.go) | Inspection, validation, repair planning, and repair execution. |
 | `internal/fs/verify.go`, `rebuild.go` | Earlier presence/gzip verifier and separate index reconstruction. |
-| [`internal/storage/backend.go`](../internal/storage/backend.go), `local.go`, `memory.go`, `path.go`, `inventory.go` | Object operations, local fan-out mapping, memory backend, key validation, physical inventory/pruning. |
+| [`internal/storage/backend.go`](../internal/storage/backend.go), `local.go`, [`s3.go`](../internal/storage/s3.go), `memory.go`, `path.go`, `inventory.go` | Object operations, local/S3 fan-out mapping, memory backend, key validation, inventory/pruning. |
 
 Direct dependencies declared in [go.mod](../go.mod) are Cobra and pflag for
 commands/options, `go-humanize` for formatted sizes, and `golang.org/x/term` for
-terminal editing and paging. `x/sys` and `mousetrap` are indirect dependencies.
-Gzip, JSON, hashing, filesystem access, and concurrency primitives come from the
-Go standard library. The module declares Go 1.23.2; exact dependency versions
-are recorded in the module files.
+terminal editing and paging. AWS SDK for Go v2 supplies the S3 client, endpoint
+resolution, signing, and retries; Smithy supplies API/HTTP error types. `x/sys`,
+`mousetrap`, and SDK support modules are indirect dependencies. Gzip, JSON,
+hashing, filesystem access, and concurrency primitives come from the Go standard
+library. The module declares Go 1.23.2; the selected SDK versions preserve that
+requirement. Exact dependency versions are recorded in the module files.
 
 ## Program initialization
 
@@ -69,20 +73,30 @@ Package `main` registers commands through `init` functions. Cobra's root
 
 1. Load `~/.erwtensoep.json` and apply top-level settings, then the selected
    command section. Flags explicitly set by the user retain precedence.
-2. Require an archive directory, except for `hello` and `recipe`. Ordinary
-   archive commands offer to create a missing directory; `fsck` returns an error.
-3. Select storage. `local` leaves `Options.Storage` unset for lazy initialization;
-   `memory` creates a fresh `MemoryBackend` for that invocation.
+2. Require an archive location, except for `hello` and `recipe`, which skip
+   storage initialization. Local archive commands offer to create a missing
+   directory; `fsck` returns an error. S3 locations are parsed without host
+   filesystem operations or bucket-creation prompts.
+3. Select storage. The default `auto` selects S3 for an `s3://bucket/prefix`
+   URL and local storage for host paths. S3 URLs also override the old `local`
+   configuration value. Explicit `s3` requires a URL; `memory` rejects S3 URLs
+   and creates a fresh in-memory store. S3 construction validates the endpoint
+   and environment credentials before sending requests.
 
 Configuration uses pointer fields to distinguish an omitted value from zero or
 false. `setIfNotChanged` checks whether a flag exists and was explicitly set,
 then updates its value without marking it as a command-line override. This
 allows a command section to override the general configuration. Fsck's repair
 and verbosity flags are local command variables, not configuration fields.
+S3 settings are `endpoint_url` and `region`. Global flag normalization aliases
+`--endpoint_url` to `--endpoint-url`, preserving explicit-flag precedence.
 
 Archive methods receive [`fs.Options`](../internal/fs/options.go). Most commands
 load the index with `GetSuperblock`. Fsck and rebuild take independent paths to
-avoid requiring a healthy loaded index. `main` exits with status 1 when Cobra
+avoid requiring a healthy loaded index. All three use `ensureStorage`, which
+preserves S3 URLs and only applies `filepath.Abs` to local locations. This also
+supports direct filesystem-package callers supplying an S3 location, endpoint,
+and region without an injected backend. `main` exits with status 1 when Cobra
 returns an error. Individual merge failures can be accumulated as reported
 counts, and the interactive shell catches command errors and keeps running;
 neither necessarily produces a failing process exit.
@@ -249,12 +263,101 @@ trees in child-before-parent order. Backends without that interface fall back
 to enumerating canonical objects for fsck, with no physical-layout repair.
 
 `storage.BlobSize` uses an optional `BlobSize(string) (int64, error)` method.
-Local storage uses `Stat`; memory storage reports buffer length. Other backends
+Local storage uses `Stat`; S3 uses `HeadObject`; memory storage reports buffer length. Other backends
 fall back to reading and counting the object bytes, then closing the reader.
 
 `MemoryBackend` is an in-process, mutex-protected object store used by tests and
 development. It does not persist across executable invocations. Its thread
 safety does not make a `Superblock` safe for concurrent mutation.
+
+### S3-compatible storage
+
+[`S3Backend`](../internal/storage/s3.go) implements both `Backend` and
+`ArchiveInspector`, plus the optional `BlobSize` method. It does not depend on
+AWS-specific account discovery. The constructor accepts the archive URI,
+provider endpoint, and signing region, then constructs an SDK client directly.
+
+The URI parser separates the bucket from a URL-decoded prefix. A single
+trailing slash is accepted; ambiguous empty/dot components, URL credentials,
+queries, fragments, backslashes, and control characters are rejected. The
+backend retains either an empty prefix or one ending in `/`. Every request is
+scoped to that exact prefix boundary, so `work/` never includes `work-old/`.
+Normal object keys reject absolute and traversal paths before any request.
+
+The S3 physical layout matches local storage. For example:
+
+```text
+Archive:       s3://bucket/backups/work
+Canonical key: blocks/0123456789abcdef
+S3 object key: backups/work/blocks/0123/4567/89ab/cdef
+Index key:     backups/work/superblock.json.gz
+```
+
+Object bytes and JSON/gzip schemas are unchanged. Copying all archive files
+with their relative paths preserved therefore preserves the format between
+local storage and an S3 prefix; there is no built-in migration command. Make
+such copies while the archive is idle.
+
+The SDK uses an explicit `BaseEndpoint` and `UsePathStyle: true`, keeping the
+bucket in the request path rather than adding it to a custom hostname. A
+provider-specific endpoint and signing region are independent settings. This
+uses the SDK's supported endpoint customization API.
+[AWS SDK endpoint configuration](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-endpoints.html)
+
+Credentials are captured from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+and optional `AWS_SESSION_TOKEN` during construction and exposed through a
+cached credentials provider. The normal SDK profile/instance-metadata discovery
+chain is not loaded. Both access and secret keys are required. They remain
+private runtime client state; neither `Options` nor the superblock serializes
+them. Environment changes require a new process/client; expiring session
+credentials are not automatically refreshed. Signing-region precedence is
+explicit/configured region, `AWS_REGION`, `AWS_DEFAULT_REGION`, then `us-east-1`.
+
+The endpoint is mandatory even for AWS, and accepts HTTP(S) origins without
+userinfo, a bucket/path, query, or fragment. HTTP supports local test servers;
+hosted-provider examples use HTTPS. The HTTP client has a two-minute timeout
+per attempt and refuses redirects. SDK retry attempts are capped at three.
+Requests use Signature Version 4. Optional request/response checksums are set
+to `WhenRequired` to avoid automatically requiring checksum trailers and
+`aws-chunked` transfers from third-party services; archive gzip and CRC64
+validation remains in the filesystem layer.
+
+| Backend method | S3 operation and behavior |
+| --- | --- |
+| `GetBlob` | `GetObject`; return the streaming response body for the caller to close. |
+| `PutBlob` | `PutObject` with a seekable byte reader and known content length. No multipart upload or separate temporary object. |
+| `DeleteBlob` | `DeleteObject` for the current object; absence is idempotent. |
+| `BlobSize` | `HeadObject` and validate the returned content length. |
+| `ListBlobs` | `ListObjectsV2` with prefix and continuation tokens, then map valid fan-out paths to canonical keys and sort. |
+
+List results are checked against the requested prefix before use. Truncated
+responses must provide a nonempty, previously unseen continuation token;
+otherwise the operation fails rather than returning a partial inventory that
+fsck might mistake for missing data. All pages are consumed before ordinary
+listing callbacks run. The implementation uses the standard API's pagination
+contract. [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html)
+
+Missing-object responses become `os.PathError` wrapping `os.ErrNotExist`,
+preserving normal empty-archive and missing-block behavior. Explicit
+`NoSuchBucket` errors remain operational errors. Access denied, signing,
+transport, and listing failures propagate; they must not turn into corruption
+deletions. A bare 404 object/HEAD response maps to a missing object; HEAD errors
+can omit the detailed service error code.
+[HeadObject error behavior](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)
+
+Inspection lists the reserved `blocks/`, `blobs/`, and `entries/` categories,
+reporting invalid physical keys, including folder markers. Repair deletes exact
+invalid keys without path-cleaning them into different objects. S3 has no real
+directories, so `EmptyDirs` stays empty and `PruneEmptyArchiveDirs` is a no-op.
+Bucket/prefix creation, provider policy management, and deleting historical S3
+object version IDs are outside the backend. `stats` measures current referenced
+objects, not noncurrent versions retained by a provider.
+
+The implementation targets general-purpose S3 buckets and compatible providers
+with path-style access and the operations above. S3 Express directory buckets,
+access-point routing, and provider-specific authentication modes are not part
+of this backend. It retains the existing single-writer archive model: individual
+object replacement does not make index and data updates transactional.
 
 ## Merge pipeline
 
@@ -388,8 +491,8 @@ cross-file usage; multiple versions at one path alone do not. This avoids
 holding a full set of referring paths for every block.
 
 The method checks referenced metadata and size consistency, but it does not
-decompress block data. On local storage, measuring compressed bytes requires
-file-size lookups rather than content reads.
+decompress block data. Local storage uses file-size lookups and S3 uses HEAD
+requests rather than content reads.
 
 ## Verification, fsck, and rebuild
 
@@ -489,7 +592,7 @@ validation and repair path.
 
 - The full superblock, CLI tree, and fsck inventory/repair state live in memory.
   File reads stream blocks, but metadata memory usage grows with archive size.
-- Object replacement is atomic at a local filename, not across the archive.
+- Object replacement is at one local filename or S3 object, not across the archive.
   There is no write-ahead log, archive-wide lock, or transactional snapshot.
   Independent writers can overwrite one another's indexes. The history-file
   lock does not coordinate archive access.
@@ -529,8 +632,10 @@ go test ./...
 go vet ./...
 ```
 
-Tests use temporary directories and memory backends. The command integration
-test builds a temporary executable and exercises a local archive through
+Tests use temporary directories, memory backends, and a local HTTP S3 fixture
+with dummy credentials. No live provider account is required. S3 tests need
+permission to bind a localhost port. The command integration
+tests build temporary executables and exercise local and S3 archives through
 merge, reconstruction, restoration, shell commands, statistics, deletion, and
 fsck. Run focused areas with:
 
@@ -539,6 +644,7 @@ go test ./internal/fs -run FSCK
 go test ./internal/storage
 go test ./cmd -run 'Shell|History|Completion'
 go test ./cmd -run Integration
+go test ./internal/storage ./internal/fs ./cmd -run S3
 ```
 
 | Test area | Important behaviors |
@@ -549,6 +655,7 @@ go test ./cmd -run Integration
 | `internal/fs/stats_test.go`, `cmd/stats_test.go` | Sharing calculations, stored sizes, compression expansion, report formatting. |
 | `internal/fs/fsck_test.go`, `cmd/fsck_test.go` | Corruption cascades, orphan recovery, stale plans, index discrepancies, I/O failures, confirmation, progress totals/percentages, clean rechecks. |
 | `internal/storage/*_test.go` | Backend contracts, fan-out layout, size fallback, pruning, no-follow inventory. |
+| `internal/storage/s3_test.go`, `internal/fs/s3_test.go`, `cmd/s3_test.go` | Endpoint/region/credential configuration, signed HTTP requests, pagination, prefix isolation, errors, full S3 command flow, corruption repair, orphan recovery. |
 | `cmd/cli*_test.go` | Navigation, globs/quoting, listings, pager, completion, history persistence, removal. |
 | `cmd/integration_test.go` | Actual executable behavior and persistence across invocations. |
 

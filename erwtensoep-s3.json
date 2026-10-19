@@ -1,0 +1,6 @@
+{
+  "archive-dir": "s3://your-bucket/erwtensoep/work",
+  "storage-backend": "auto",
+  "endpoint_url": "https://s3.us-east-1.amazonaws.com",
+  "region": "us-east-1"
+}

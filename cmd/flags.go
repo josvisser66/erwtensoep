@@ -18,7 +18,7 @@ var (
 func addArchiveDirFlag(cmd *cobra.Command) string {
 	flagName := "archive-dir"
 	// ArchiveDir points to the root of the backup archive.
-	cmd.PersistentFlags().StringVarP(&options.ArchiveDir, flagName, "a", "", "Location of the archive directory")
+	cmd.PersistentFlags().StringVarP(&options.ArchiveDir, flagName, "a", "", "Archive directory or s3://bucket/prefix")
 	return flagName
 }
 
@@ -44,7 +44,9 @@ func addLongFlag(cmd *cobra.Command) {
 }
 
 func addBackendFlag(cmd *cobra.Command) {
-	cmd.PersistentFlags().StringVar(&backend, "storage-backend", "local", "Storage backend to use (local, memory)")
+	cmd.PersistentFlags().StringVar(&backend, "storage-backend", "auto", "Storage backend (auto, local, s3, memory); auto selects from archive-dir")
+	cmd.PersistentFlags().StringVar(&options.EndpointURL, "endpoint-url", "", "S3 provider service URL (required for S3 archives; also --endpoint_url)")
+	cmd.PersistentFlags().StringVar(&options.Region, "region", "", "S3 signing region (default AWS_REGION, AWS_DEFAULT_REGION, then us-east-1)")
 }
 
 func addOutputDirFlag(cmd *cobra.Command) {

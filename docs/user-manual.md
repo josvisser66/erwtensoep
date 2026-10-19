@@ -2,7 +2,8 @@
 
 [README](../README.md) · [Technical manual](technical-manual.md)
 
-erwtensoep stores files in a directory-based archive. It keeps saved versions,
+erwtensoep stores files in a local directory or S3-compatible object storage.
+It keeps saved versions,
 shares identical file contents and data blocks, and compresses stored objects
 with gzip. You can merge source directories, browse archived files, restore
 them, remove paths, and check or repair the archive.
@@ -41,8 +42,10 @@ erwtensoep --archive-dir ARCHIVE SUBCOMMAND [OPTIONS] [ARGUMENTS...]
 
 | Global option | Meaning |
 | --- | --- |
-| `-a`, `--archive-dir DIR` | Archive directory. Required for archive operations unless configured. |
-| `--storage-backend NAME` | `local` by default. `memory` is temporary storage for development; it does not persist between invocations. |
+| `-a`, `--archive-dir LOCATION` | Local directory or `s3://bucket/prefix`. Required for archive operations unless configured. |
+| `--storage-backend NAME` | `auto` by default: local paths use local storage and S3 URLs use S3. Also accepts `local`, `s3`, and temporary `memory`. An S3 URL selects S3 even with the older `local` setting; `memory` cannot be combined with an S3 URL. |
+| `--endpoint-url URL`, `--endpoint_url URL` | S3 provider's service endpoint. Required for S3, including AWS. |
+| `--region REGION` | S3 signing region. Defaults to `AWS_REGION`, then `AWS_DEFAULT_REGION`, then `us-east-1`. |
 | `-h`, `--help` | Help for the selected command. |
 
 Use `erwtensoep help COMMAND` or `erwtensoep COMMAND --help` for built-in help.
@@ -51,8 +54,9 @@ human-readable sizes.
 
 ## Understand archive paths and versions
 
-The archive directory contains erwtensoep's storage objects. Its physical
-directory layout is separate from the file paths displayed when browsing.
+The archive location contains erwtensoep's storage objects. Its physical
+directory layout or S3 object keys are separate from the file paths displayed
+when browsing.
 
 Merging `/home/alice/work` stores `/home/alice/work/documents/notes.txt` as
 `documents/notes.txt`. The source directory's own name is not prepended. Merging
@@ -92,7 +96,7 @@ erwtensoep -a "$HOME/archives/work" merge "$HOME/backup-source"
 erwtensoep -a "$HOME/archives/work" ls
 ```
 
-Keep the archive outside the source tree. If the archive directory does not
+Keep local archives outside the source tree. If the archive directory does not
 exist, ordinary archive commands offer to create it; answer `y` or `yes`.
 Creating it in advance avoids that prompt. `fsck` requires an existing directory
 and never creates one.
@@ -106,6 +110,114 @@ erwtensoep -a "$HOME/archives/work" merge "$HOME/backup-source"
 The result reports changes and processing errors. Review those counts: some
 per-file failures are reported in the summary without making the process exit
 nonzero. Permission-denied source directories may also be skipped.
+
+### Use S3-compatible storage
+
+Create a bucket with your provider first, then choose a dedicated archive
+prefix, such as `s3://my-backups/erwtensoep/work`. A prefix does not need to
+exist in advance; erwtensoep creates objects as it writes the archive. A trailing
+slash is optional. `s3://my-backups` uses the bucket root, but separate prefixes
+make it easier to keep archives apart. Empty internal path components and `.`
+or `..` components are rejected rather than normalized to a different archive.
+
+Set the credentials in the environment of the erwtensoep process:
+
+```sh
+export AWS_ACCESS_KEY_ID='YOUR_PROVIDER_ACCESS_KEY'
+export AWS_SECRET_ACCESS_KEY='YOUR_PROVIDER_SECRET_KEY'
+```
+
+Use your provider's values, not the placeholders. Credentials must come from
+these variables: erwtensoep does not read AWS profiles, credential files, or
+instance-role metadata. `AWS_SESSION_TOKEN` is also supported for temporary
+credentials. No credential flags or JSON credential settings are provided, and
+credentials are not serialized into the archive. Unset an old session token
+when switching to a provider that uses ordinary access/secret keys.
+
+Pass the service endpoint separately from the archive location:
+
+```sh
+erwtensoep -a s3://my-backups/erwtensoep/work \
+  --endpoint-url https://s3.us-east-1.amazonaws.com --region us-east-1 \
+  merge "$HOME/backup-source"
+
+erwtensoep -a s3://my-backups/erwtensoep/work \
+  --endpoint-url https://s3.us-east-1.amazonaws.com --region us-east-1 cli
+
+erwtensoep -a s3://my-backups/erwtensoep/work \
+  --endpoint-url https://s3.us-east-1.amazonaws.com --region us-east-1 fsck -nv
+```
+
+`--endpoint_url` and `--endpoint-url` are equivalent. The endpoint must be an
+HTTP(S) service URL, without a bucket, prefix, credentials, query, or fragment.
+Use HTTPS for hosted services; HTTP is supported for local S3 servers. Endpoint
+redirects are not followed, so use the endpoint for the bucket's actual region.
+The backend uses Signature Version 4 and path-style bucket addressing.
+
+Examples for specific regions are shown below. Obtain the endpoint and signing
+region for **your bucket** from the provider; these are not universal endpoints.
+
+| Provider | Example `--endpoint-url` | Example `--region` | Provider reference |
+| --- | --- | --- | --- |
+| AWS S3 | `https://s3.us-east-1.amazonaws.com` | `us-east-1` | [AWS service endpoints](https://docs.aws.amazon.com/general/latest/gr/s3.html) |
+| IDrive e2 | `https://s3.us-east-1.idrivee2.com` | `us-east-1` | [IDrive S3 API and regional endpoints](https://www.idrive.com/s3-storage-e2/s3-compatible-api) |
+| Backblaze B2 | `https://s3.us-west-004.backblazeb2.com` | `us-west-004` | [Backblaze endpoint and key setup](https://www.backblaze.com/docs/en/cloud-storage-get-started-with-a-backblaze-integration) |
+| Wasabi | `https://s3.us-east-1.wasabisys.com` | `us-east-1` | [Wasabi regional service URLs](https://docs.wasabi.com/docs/service-urls-for-wasabis-storage-regions) |
+
+For Backblaze, the application key ID is `AWS_ACCESS_KEY_ID` and the application
+key is `AWS_SECRET_ACCESS_KEY`; use an S3-compatible application key, not the
+master key. [Backblaze S3 authentication](https://www.backblaze.com/apidocs/introduction-to-the-s3-compatible-api)
+
+The region can instead come from `AWS_REGION` or `AWS_DEFAULT_REGION`, in that
+order. Explicit `--region` or configured `region` takes precedence. The final
+fallback is `us-east-1`; it is not automatic discovery of your provider's region.
+
+To avoid repeating connection options, merge settings like these into
+`~/.erwtensoep.json` (also see [the sample file](../erwtensoep-s3.json)):
+
+```json
+{
+  "archive-dir": "s3://my-backups/erwtensoep/work",
+  "storage-backend": "auto",
+  "endpoint_url": "https://s3.us-east-1.amazonaws.com",
+  "region": "us-east-1"
+}
+```
+
+Then `erwtensoep merge SOURCE`, `erwtensoep cli`, and other commands use that
+archive. Restore's output directory and merge's source directories remain local
+host paths. `--storage-backend s3` is optional and requires an S3 archive URL.
+An older configuration with `"storage-backend": "local"` does not prevent an
+explicit S3 URL from selecting S3.
+
+The required S3 operations are `GetObject`, `PutObject`, `DeleteObject`,
+`HeadObject`, and `ListObjectsV2`. Grant read/list permissions for checking and
+browsing, plus write/delete permissions for modification and repair. The tool
+does not create buckets, list all buckets, or manage provider policies. A
+missing bucket, invalid credentials, and access-denied responses are errors;
+they are not treated as corrupt data to delete.
+
+All archive commands use the same data format in S3. Keys under the chosen
+prefix retain the local archive's layout; for example, the index is
+`erwtensoep/work/superblock.json.gz`. S3 has no real directories, so removing
+objects leaves no empty directories to prune. `fsck` can remove invalid keys
+and folder-marker objects under `blocks/`, `blobs/`, and `entries/`. Use a
+dedicated archive prefix; arbitrary objects in these reserved categories may
+be classified as invalid storage objects.
+
+S3 usage differs from local disk usage:
+
+- A full check downloads stored objects. `stats` measures compressed block
+  sizes with HEAD requests; listing and other operations make API calls.
+- `stats` describes current referenced block objects, not a provider billing
+  total. Request traffic, metadata, and retained object versions are excluded.
+- In a versioned bucket, deletion can create a delete marker while older
+  physical versions remain. Reclaiming their space depends on provider version
+  and lifecycle settings; erwtensoep does not delete individual S3 version IDs.
+  [S3 DeleteObject behavior](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html)
+- Use only one archive writer at a time. S3 does not add an
+  archive lock or make a multi-object update transactional. Keep it idle during
+  `fsck` and `rebuild` as with local storage.
 
 ### Preview or limit a merge
 
@@ -212,8 +324,9 @@ reuse without cross-file sharing. Gzip can increase the size of small or
 incompressible data; that appears as an increase.
 
 `stats` excludes metadata, superblock backups, unreferenced objects, and
-filesystem allocation overhead. Use your host's `du` on the archive directory
-for disk usage. The CLI's `du` instead measures logical sizes of the latest
+filesystem allocation overhead. Use your host's `du` on a local archive directory
+for disk usage, or your provider's storage reports for S3. The CLI's `du`
+instead measures logical sizes of the latest
 files, without deduplication.
 
 ### Remove archived paths
@@ -279,7 +392,7 @@ Edit or merge settings into your home configuration as appropriate:
 ```json
 {
   "archive-dir": "/absolute/path/to/archive",
-  "storage-backend": "local",
+  "storage-backend": "auto",
   "merge": {
     "min-size": 0,
     "max-size": 104857600,
@@ -300,7 +413,8 @@ Values only apply where the command has a corresponding flag. Recognized
 command sections are `merge`, `ls`, `cli`, `rm`, `restore`, `verify`, `fsck`,
 `stats`, `rebuild`, `hello`, and `recipe`.
 
-The usable settings are `archive-dir`, `storage-backend`, `min-size`, `max-size`,
+The usable settings are `archive-dir`, `storage-backend`, `endpoint_url`, `region`,
+`min-size`, `max-size`,
 `dry-run`, `sb-write-threshold`, `output-dir`, and `shallow`. JSON sizes are
 integer byte counts, not strings such as `100MB`. Paths are used literally:
 JSON values do not expand `~` or environment variables. Fsck's `yes`, `no`, and
@@ -466,8 +580,9 @@ Generate a host-shell completion script for `bash`, `zsh`, `fish`, or
 The generated commands and flag completions are separate from the archive-path
 completion already built into `cli`.
 
-The current command initialization requires an existing `--archive-dir` (or
-configured archive) when generating a script. For example:
+The current command initialization requires `--archive-dir` (or a configured
+archive location) when generating a script. A local directory must already
+exist; an S3 location requires its endpoint and credentials. For example:
 
 ```sh
 erwtensoep -a "$HOME/archives/work" completion zsh > /tmp/_erwtensoep
@@ -619,6 +734,9 @@ moves to its nearest surviving ancestor.
 | Symptom | What to check |
 | --- | --- |
 | `archive-dir is required` | Supply `-a` or configure `archive-dir` in `~/.erwtensoep.json`. |
+| S3 endpoint is required | Pass `--endpoint-url` / `--endpoint_url`, or configure `endpoint_url`; it is required even for AWS. |
+| S3 signing or access error | Check both credential environment variables, any stale session token, bucket permissions, and the endpoint/signing region. |
+| S3 removal does not reduce provider usage | Check retained object versions and lifecycle/retention settings; erwtensoep removes current objects, not historical provider versions. |
 | Files appear under unexpected paths | Source roots are stripped during merge; multiple sources share one namespace. |
 | An updated file was skipped | Merge identifies versions from metadata. Check size and modification time. |
 | A glob matches too little | Top-level patterns match whole paths and `*` does not cross `/`; use a directory name for its subtree. |

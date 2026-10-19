@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"josvisser.nl/erwtensoep/internal/storage"
 	"josvisser.nl/erwtensoep/internal/utils"
-	"path/filepath"
 )
 
 // readUnzipUnmarshal reads a gzip-compressed JSON blob and decodes it into any.
@@ -31,12 +30,9 @@ func RebuildSuperblock(options *Options) error {
 	sw := utils.NewStopwatch("Rebuilding the super block")
 	defer sw.Stop()
 
-	var err error
-	options.ArchiveDir, err = filepath.Abs(options.ArchiveDir)
-	if err != nil {
+	if err := ensureStorage(options); err != nil {
 		return err
 	}
-	ensureStorage(options)
 	sb := newSuperblock(options)
 	sb.fix("rebuilt_superblock.json")
 
