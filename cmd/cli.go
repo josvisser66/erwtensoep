@@ -120,6 +120,9 @@ several versions are saved. Choose one number, Enter to skip, or q to cancel;
 for files within directories; skipped files contribute nothing to the total.
 versions FILE lists every saved version of that path, including symlinks.
 ls appends (N versions) to files and symlinks with multiple saved versions.
+If a file and directory share a name, a selects the file and a/ selects the
+directory. cd a enters the directory. ls and Tab show both a and a/.
+rm a removes file versions; rm -r a/ removes descendants, leaving a intact.
 Directories are inferred; empty directories and directory metadata are absent.
 du counts logical file bytes, including hidden files, without deduplicating.
 more uses Space for a page, Enter for a line, and q to stop; redirected output
@@ -285,13 +288,20 @@ func (s *archiveShell) expand(word shellWord) []string {
 			continue
 		}
 		var next []string
+		seen := make(map[string]bool)
+		add := func(name string) {
+			if !seen[name] {
+				next = append(next, name)
+				seen[name] = true
+			}
+		}
 		for _, candidate := range candidates {
-			n, err := s.resolve(candidate, true)
+			n, err := s.resolveDirectory(candidate)
 			if err != nil || !n.isDir() {
 				continue
 			}
 			if part == "." || part == ".." {
-				next = append(next, join(candidate, part))
+				add(join(candidate, part))
 				continue
 			}
 			for _, child := range n.children {
@@ -302,7 +312,11 @@ func (s *archiveShell) expand(word shellWord) []string {
 				if match, _ := path.Match(part, base); match {
 					// Keep .. in the result: cleaning it here would change paths
 					// that traverse symbolic links before expanding the next part.
-					next = append(next, join(candidate, base))
+					name := join(candidate, base)
+					if child.isDir() && !s.nodes[child.path].isDir() {
+						name = directoryKey(name)
+					}
+					add(name)
 				}
 			}
 		}
@@ -310,9 +324,12 @@ func (s *archiveShell) expand(word shellWord) []string {
 	}
 	if strings.HasSuffix(word.pattern, "/") {
 		var directories []string
+		seen := make(map[string]bool)
 		for _, candidate := range candidates {
-			if n, err := s.resolve(candidate, true); err == nil && n.isDir() {
-				directories = append(directories, candidate+"/")
+			name := directoryKey(candidate)
+			if n, err := s.resolveDirectory(candidate); err == nil && n.isDir() && !seen[name] {
+				directories = append(directories, name)
+				seen[name] = true
 			}
 		}
 		candidates = directories

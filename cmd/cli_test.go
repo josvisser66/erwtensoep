@@ -316,7 +316,7 @@ func TestArchiveTreeLatestAndConflictingDirectories(t *testing.T) {
 	// time.Time{} predates Unix(-100), so use a clearly older archive version.
 	old.MTime = time.Time{}.Add(-time.Hour)
 	nodes := archiveTree(sb)
-	if nodes["/file"].entry != tie || !nodes["/dir"].isDir() || len(nodes["/dir"].children) != 1 {
+	if nodes["/file"].entry != tie || nodes["/dir"].entry != old || !nodes["/dir/"].isDir() || len(nodes["/dir/"].children) != 1 {
 		t.Fatalf("unexpected archive tree: %#v", nodes)
 	}
 }

@@ -466,8 +466,11 @@ validation, but this reader does not recompute CRC64 IDs as fsck does.
 
 The CLI builds an `archiveTree` snapshot from the latest entry per path. Equal
 modification times are broken deterministically by entry ID. It
-synthesizes parent directories and prefers a directory when archived
-descendants conflict with an entry at the same path. Top-level listing and
+synthesizes parent directories while retaining any file entry at the same path.
+Bare lookup keys prefer file entries; slash-suffixed keys select directories,
+and bare directory aliases exist where there is no file. Each parent has both
+children when a collision exists. Traversal and directory-only operations use
+the directory node; final bare file operands use the entry node. Top-level listing and
 restore use the same time/ID ordering, including zero and negative timestamps.
 Both top-level and interactive `ls` append `(N versions)` when a displayed
 entry's path has multiple saved versions. Interactive listings use the exact
@@ -488,8 +491,9 @@ are separate from command history and pager keys.
 File-command resolution accepts a selection callback before following a link,
 so older link targets and file-to-link type changes remain accessible. Targets
 stay inside the virtual archive and have independent choices when versioned.
-Explicit content commands can read historical file entries at an inferred
-directory path. Navigation and completion retain the latest-version tree.
+Selection happens after choosing the file or directory object. An explicit
+trailing slash never selects historical file versions at the directory path.
+Navigation and completion retain the latest-version tree.
 `du` builds a temporary selected tree, recursively including hidden files and
 excluding skipped entries, before printing sizes. Display-depth limits do not
 limit selection because deeper files contribute to totals. Directory listings
@@ -505,9 +509,8 @@ current archive directory, then reads all entries for that exact path from
 ID, both descending, without modifying the index. `-r` reverses this order;
 `-h` formats logical sizes. The table includes IDs, RFC3339 timestamps with
 nanosecond precision when present, sizes, modes, paths, and symlink targets.
-Final symlinks retain their own histories. An inferred directory can still
-expose saved file entries at its path, while directories with no file history
-are rejected. Listing uses only index metadata and makes no block/blob reads,
+Final symlinks retain their own histories. Bare names expose saved file entries
+even when a directory shares the path; explicit directory operands are rejected. Listing uses only index metadata and makes no block/blob reads,
 so the same command works with local and S3 archives.
 
 Path resolution walks components rather than blindly cleaning the entire path.
@@ -515,6 +518,10 @@ It enforces file-versus-directory checks, handles logical/physical navigation,
 resolves absolute symlink targets at archive root, and stops after 40 symlink
 expansions. The tokenizer preserves whether glob characters were quoted;
 completion reuses partial parsing and quotes inserted path text as needed.
+Completion offers both bare file and slash-suffixed directory candidates for
+collisions. CLI glob expansion preserves both final operands, but deduplicates
+traversal through a shared parent. Listings and usage output mark colliding
+directories with `/` even without a classification flag.
 
 `cat` and `more` use `OpenRegularFile`. Cat streams directly when no formatting
 is requested; formatting runs over buffered bytes. More processes buffered
@@ -531,7 +538,14 @@ history is preserved rather than overwritten. Lock/save failures retain pending
 commands for a later retry. Piped sessions do not load or save history.
 
 [`RestoreTargets`](../internal/fs/restore.go) expands restore patterns to sorted
-index paths using the same matcher as `RemoveTargets`. The command collects one
+index paths. Exact non-glob file operands take precedence over descendants;
+trailing slashes select descendants only. Other patterns use the shared matcher.
+Unlike `RemoveTargets`, restore rejects selections containing an entry and any
+of its descendants before version selection. `validateRestorePaths` checks
+every selected path's ancestors against a set, including symlink ancestors;
+checking adjacent sorted names alone would miss intervening siblings such as
+`a-other` between `a` and `a/child`. `RestoreVersions` repeats this validation
+for library callers before writing any output. The command collects one
 version ID per path, then calls `RestoreVersions` with exact path/ID pairs.
 `RestoreVersions` validates every selection before touching output files, sorts
 paths, and writes under the output directory. The library's existing `Restore`
@@ -548,7 +562,12 @@ resolver or enforce a symlink-safe output boundary.
 
 [`RemoveTargets`](../internal/fs/remove.go) expands top-level patterns to
 archive paths. `Remove` passes those paths to `RemovePaths`. Interactive removal
-resolves and expands archive paths itself. Both command interfaces build an
+resolves and expands archive paths itself. It keeps separate sets of exact file
+operands and recursive directory operands: `rm a` selects the file and
+`rm -r a/` selects strict descendants, preserving all versions of `a`. Both
+objects can also be selected together in either argument order. Top-level
+removal retains its pattern semantics (bare names include themselves and
+descendants). Both command interfaces build an
 exact path-to-version-ID selection and call `RemoveVersions`, so a quoted
 literal `*` or `[` in a filename is not interpreted a second time.
 
@@ -779,7 +798,8 @@ go test ./internal/storage ./internal/fs ./cmd -run S3
 | `internal/fs/fsck_test.go`, `cmd/fsck_test.go` | Corruption cascades, orphan recovery, stale plans, index discrepancies, I/O failures, confirmation, progress totals/percentages, clean rechecks. |
 | `internal/storage/*_test.go` | Backend contracts, fan-out layout, size fallback, pruning, no-follow inventory. |
 | `internal/storage/s3_test.go`, `internal/fs/s3_test.go`, `cmd/s3_test.go` | Endpoint/region/credential configuration, signed HTTP requests, pagination, prefix isolation, errors, full S3 command flow, corruption repair, orphan recovery. |
-| `cmd/cli*_test.go` | Navigation, globs/quoting, listings and saved versions, pager, completion, history persistence, removal. |
+| `cmd/cli*_test.go` | Navigation, globs/quoting, listings and saved versions, pager, completion, history persistence, removal, and same-name file/directory selection. |
+| `internal/fs/restore_collision_test.go`, `cmd/restore_collision_test.go` | Exact file versus directory restore, nested collisions, symlink ancestors, and rejection before prompts or output mutation. |
 | `cmd/version_selection_test.go` | Selected-version reads, size totals, restoration/listing, symlinks, skipped paths, cancellation, input/output errors, latest flags, and pager input boundaries. |
 | `cmd/integration_test.go` | Actual executable behavior and persistence across invocations. |
 

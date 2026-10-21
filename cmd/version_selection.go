@@ -114,9 +114,9 @@ func (v *versionSelector) node(n *archiveNode) (*archiveNode, error) {
 	return &archiveNode{path: n.path, entry: choice.entry}, nil
 }
 
-func (v *versionSelector) resolve(s *archiveShell, name string, followFinal, historicalFile bool) (*archiveNode, error) {
-	return s.resolveWithSelection(name, followFinal, func(n *archiveNode, final bool) (*archiveNode, error) {
-		if n.isDir() && (!final || !historicalFile || len(v.sb.Entries[filepath.FromSlash(strings.TrimPrefix(n.path, "/"))]) == 0) {
+func (v *versionSelector) resolve(s *archiveShell, name string, followFinal bool) (*archiveNode, error) {
+	return s.resolveWithSelection(name, followFinal, func(n *archiveNode, _ bool) (*archiveNode, error) {
+		if n.isDir() {
 			return n, nil
 		}
 		return v.node(n)
@@ -130,7 +130,7 @@ func (s *archiveShell) selectContentOperands(names []string, latest bool) ([]lis
 	var rows []listingRow
 	var errs []error
 	for _, name := range names {
-		n, err := v.resolve(s, name, true, true)
+		n, err := v.resolve(s, name, true)
 		if v.err != nil {
 			return nil, nil, v.err
 		}

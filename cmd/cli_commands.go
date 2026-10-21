@@ -51,7 +51,7 @@ func (s *archiveShell) cd(args []string) error {
 		// missing/.. cannot silently succeed, while link/.. uses its parent.
 		for _, component := range strings.Split(target, "/") {
 			lookup = path.Join(lookup, component)
-			n, err := s.resolve(lookup, true)
+			n, err := s.resolveDirectory(lookup)
 			if err != nil {
 				return err
 			}
@@ -60,7 +60,7 @@ func (s *archiveShell) cd(args []string) error {
 			}
 		}
 	}
-	n, err := s.resolve(lookup, true)
+	n, err := s.resolveDirectory(lookup)
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func (s *archiveShell) pwd(args []string) error {
 	}
 	p := s.cwd
 	if *physical {
-		n, err := s.resolve(p, true)
+		n, err := s.resolveDirectory(p)
 		if err != nil {
 			return err
 		}
@@ -135,7 +135,7 @@ func (s *archiveShell) ls(args []string) error {
 	var rows []listingRow
 	v := newVersionSelector(s.sb, s.in, s.out, *latest)
 	for _, name := range names {
-		n, err := v.resolve(s, name, false, false)
+		n, err := v.resolve(s, name, false)
 		if v.err != nil {
 			return v.err
 		}
@@ -188,12 +188,15 @@ type listingRow struct {
 }
 
 func (s *archiveShell) listDirectory(n *archiveNode, name string, o listingOptions, header bool) {
+	if !s.nodes[n.path].isDir() {
+		name = directoryKey(name)
+	}
 	if header {
 		fmt.Fprintf(s.out, "%s:\n", name)
 	}
 	var rows []listingRow
 	if o.all {
-		rows = append(rows, listingRow{n, "."}, listingRow{s.nodes[path.Dir(n.path)], ".."})
+		rows = append(rows, listingRow{n, "."}, listingRow{s.nodes[directoryKey(path.Dir(n.path))], ".."})
 	}
 	for _, child := range n.children {
 		base := path.Base(child.path)
@@ -238,10 +241,10 @@ func (s *archiveShell) printNode(n *archiveNode, name string, o listingOptions) 
 	if !n.isDir() {
 		versionSuffix = versionCountSuffix(len(s.sb.Entries[n.entry.GetPath()]))
 	}
-	if o.classify {
+	if n.isDir() && (o.classify || !s.nodes[n.path].isDir()) {
+		name = directoryKey(name)
+	} else if o.classify {
 		switch {
-		case n.isDir():
-			name += "/"
 		case stats.Mode&0o111 != 0 && stats.Mode.IsRegular():
 			name += "*"
 		default:
@@ -318,6 +321,9 @@ func (s *archiveShell) du(args []string) error {
 			size += walk(child, path.Join(name, path.Base(child.path)), level+1)
 		}
 		if (*depth < 0 || level <= *depth) && (n.isDir() || *all || level == 0) {
+			if n.isDir() && !s.nodes[n.path].isDir() {
+				name = directoryKey(name)
+			}
 			printSize(size, name)
 		}
 		return size
@@ -348,7 +354,7 @@ func (s *archiveShell) du(args []string) error {
 	var errs []error
 	var rows []listingRow
 	for _, name := range names {
-		n, err := v.resolve(s, name, false, false)
+		n, err := v.resolve(s, name, false)
 		if err == nil {
 			n, err = selectTree(n)
 		}

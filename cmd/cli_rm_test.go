@@ -175,12 +175,12 @@ func TestShellRemoveDirectoriesAndSymlinks(t *testing.T) {
 	s, out := testArchiveShell(t)
 	// A symlink within a deleted directory must not delete its outside target.
 	s.sb.Entries["dir/outside"] = map[string]interface{}{"v1": &fs.Symlink{Path: "dir/outside", Target: "/alpha.txt"}}
-	// Older file versions at the directory path must also be removed.
+	// Older file versions at the directory path must survive directory removal.
 	copy := *s.sb.Entries["alpha.txt"]["v1"].(*fs.RegularFile)
 	copy.Path = "dir"
 	s.sb.Entries["dir"] = map[string]interface{}{"v1": &copy}
 	s.nodes = archiveTree(s.sb)
-	for _, command := range []string{"rm dir", "rm -r link/", "rm -f alpha.txt/", "rm -rf /", "rm -rf dir/..", "rm -rf dir/."} {
+	for _, command := range []string{"rm dir/", "rm -r link/", "rm -f alpha.txt/", "rm -rf /", "rm -rf dir/..", "rm -rf dir/."} {
 		before := len(s.sb.Entries)
 		if err := s.execute(command); err == nil || len(s.sb.Entries) != before {
 			t.Errorf("%s: error %v, entries %d -> %d", command, err, before, len(s.sb.Entries))
@@ -197,9 +197,12 @@ func TestShellRemoveDirectoriesAndSymlinks(t *testing.T) {
 		t.Fatalf("invalid navigation state after recursive removal: cwd=%q previous=%q", s.cwd, s.previous)
 	}
 	for name := range s.sb.Entries {
-		if name == "dir" || strings.HasPrefix(name, "dir/") {
+		if strings.HasPrefix(name, "dir/") {
 			t.Errorf("recursive removal left %s", name)
 		}
+	}
+	if got := shellOutput(t, s, out, "cat dir"); got != "alpha\n" {
+		t.Fatalf("same-named file was changed: %q", got)
 	}
 	if got := shellOutput(t, s, out, "cat alpha.txt"); got != "alpha\n" {
 		t.Fatalf("outside data was changed: %q", got)

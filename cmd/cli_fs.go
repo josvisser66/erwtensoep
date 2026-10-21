@@ -33,7 +33,8 @@ func (n *archiveNode) stats() *fs.FileStats {
 // A snapshot of the latest versions. Directories are implicit in archive paths;
 // empty directories and their original metadata are not stored in the archive.
 func archiveTree(sb *fs.Superblock) map[string]*archiveNode {
-	nodes := map[string]*archiveNode{"/": {path: "/"}}
+	nodes := make(map[string]*archiveNode)
+	dirs := map[string]*archiveNode{"/": {path: "/"}}
 	for name, versions := range sb.Entries {
 		// Break equal-mtime ties by version ID, including zero/negative mtimes.
 		var newest fs.Entry
@@ -55,25 +56,45 @@ func archiveTree(sb *fs.Superblock) map[string]*archiveNode {
 			}
 		}
 	}
-	// A path may have been a file in an older backup and a directory in a
-	// newer one. Prefer the directory when archived descendants exist.
+	// Files and inferred directories can coexist at the same path. Keep both
+	// nodes: bare keys prefer files, while slash-suffixed keys name directories.
 	for p := range nodes {
 		for p = path.Dir(p); p != "/"; p = path.Dir(p) {
-			if n := nodes[p]; n == nil || !n.isDir() {
-				nodes[p] = &archiveNode{path: p}
+			if dirs[p] == nil {
+				dirs[p] = &archiveNode{path: p}
 			}
 		}
 	}
 	for p, n := range nodes {
+		parent := dirs[path.Dir(p)]
+		parent.children = append(parent.children, n)
+	}
+	for p, n := range dirs {
 		if p != "/" {
-			parent := nodes[path.Dir(p)]
+			parent := dirs[path.Dir(p)]
 			parent.children = append(parent.children, n)
 		}
+		nodes[directoryKey(p)] = n
+		if nodes[p] == nil {
+			nodes[p] = n
+		}
 	}
-	for _, n := range nodes {
-		sort.Slice(n.children, func(i, j int) bool { return n.children[i].path < n.children[j].path })
+	for _, n := range dirs {
+		sort.Slice(n.children, func(i, j int) bool {
+			a, b := n.children[i], n.children[j]
+			if a.path == b.path {
+				return !a.isDir() && b.isDir()
+			}
+			return a.path < b.path
+		})
 	}
 	return nodes
+}
+
+func directoryKey(p string) string { return strings.TrimRight(p, "/") + "/" }
+
+func (s *archiveShell) resolveDirectory(name string) (*archiveNode, error) {
+	return s.resolvePath(name, true, true, nil)
 }
 
 func (s *archiveShell) absolute(name string) string {
@@ -90,6 +111,10 @@ func (s *archiveShell) resolve(name string, followFinal bool) (*archiveNode, err
 }
 
 func (s *archiveShell) resolveWithSelection(name string, followFinal bool, selectNode func(*archiveNode, bool) (*archiveNode, error)) (*archiveNode, error) {
+	return s.resolvePath(name, followFinal, false, selectNode)
+}
+
+func (s *archiveShell) resolvePath(name string, followFinal, directoryOnly bool, selectNode func(*archiveNode, bool) (*archiveNode, error)) (*archiveNode, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty path")
 	}
@@ -110,10 +135,17 @@ func (s *archiveShell) resolveWithSelection(name string, followFinal bool, selec
 			continue
 		}
 		if part == ".." {
-			current = s.nodes[path.Dir(current.path)]
+			current = s.nodes[directoryKey(path.Dir(current.path))]
 			continue
 		}
 		n := s.nodes[path.Join(current.path, part)]
+		if len(parts) > 0 || directoryOnly {
+			// A slash or another component explicitly requests traversal of
+			// the directory, even when a file occupies its bare name.
+			if dir := s.nodes[directoryKey(path.Join(current.path, part))]; dir != nil {
+				n = dir
+			}
+		}
 		if n == nil {
 			return nil, fmt.Errorf("%s: %w", name, errArchiveNotExist)
 		}
@@ -139,6 +171,9 @@ func (s *archiveShell) resolveWithSelection(name string, followFinal bool, selec
 			continue
 		}
 		current = n
+	}
+	if directoryOnly && !current.isDir() {
+		return nil, fmt.Errorf("%s: not a directory", name)
 	}
 	return current, nil
 }

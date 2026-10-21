@@ -30,7 +30,44 @@ func (sb *Superblock) RestoreTargets(patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, errors.New("no restore patterns specified")
 	}
-	return sb.matchingPaths(patterns), nil
+	matched := make(map[string]bool)
+	for _, pattern := range patterns {
+		p := normalizePattern(pattern)
+		// Exact file operands take precedence over same-named directories.
+		// Slash-suffixed operands select descendants only; globs remain broad.
+		if !strings.ContainsAny(p, "*?[") && !strings.HasSuffix(p, "/") && len(sb.Entries[p]) > 0 {
+			matched[p] = true
+			continue
+		}
+		for name := range sb.Entries {
+			if matchesPattern(filepath.ToSlash(name), p) {
+				matched[name] = true
+			}
+		}
+	}
+	paths := make([]string, 0, len(matched))
+	for name := range matched {
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+	return paths, validateRestorePaths(paths)
+}
+
+// A regular file or symlink cannot also be a parent directory in one restore.
+// Check every ancestor (not just adjacent sorted names) before any output write.
+func validateRestorePaths(paths []string) error {
+	selected := make(map[string]bool, len(paths))
+	for _, name := range paths {
+		selected[name] = true
+	}
+	for _, name := range paths {
+		for parent := filepath.Dir(name); parent != "." && parent != string(filepath.Separator); parent = filepath.Dir(parent) {
+			if selected[parent] {
+				return fmt.Errorf("restore path conflict: %q is selected as a file or symlink and as a directory containing %q; select %q for the file or %q for the directory, narrow broad patterns, or restore them separately into different output directories", parent, name, parent, filepath.ToSlash(parent)+"/")
+			}
+		}
+	}
+	return nil
 }
 
 func (sb *Superblock) matchingPaths(patterns []string) []string {
@@ -78,6 +115,9 @@ func (sb *Superblock) RestoreVersions(selected map[string]string, outDir string)
 	}
 	sort.Strings(paths)
 
+	if err := validateRestorePaths(paths); err != nil {
+		return 0, err
+	}
 	restored := 0
 	for _, p := range paths {
 		entry := entries[p]

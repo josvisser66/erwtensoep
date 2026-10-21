@@ -58,7 +58,7 @@ func (s *archiveShell) rm(args []string) error {
 
 	// Resolve operands once, but select exact index keys. Passing them through
 	// the archive's pattern-based Remove would reinterpret quoted * or [ names.
-	selected := make(map[string]bool) // true for recursive directory operands
+	files, directories := make(map[string]bool), make(map[string]bool)
 	var errs []error
 	for _, name := range f.Args() {
 		trimmed := strings.TrimRight(name, "/")
@@ -80,6 +80,11 @@ func (s *archiveShell) rm(args []string) error {
 			errs = append(errs, fmt.Errorf("refusing to remove the archive root"))
 			continue
 		}
+		if strings.HasSuffix(name, "/") {
+			if dir := s.nodes[directoryKey(n.path)]; dir != nil {
+				n = dir
+			}
+		}
 		if strings.HasSuffix(name, "/") && !n.isDir() {
 			// Never turn a final symlink into recursive deletion of its target.
 			errs = append(errs, fmt.Errorf("%s: not a directory (remove the trailing slash to remove the entry)", name))
@@ -89,14 +94,18 @@ func (s *archiveShell) rm(args []string) error {
 			errs = append(errs, fmt.Errorf("%s: is a directory (use -r)", name))
 			continue
 		}
-		selected[n.path] = n.isDir()
+		if n.isDir() {
+			directories[n.path] = true
+		} else {
+			files[n.path] = true
+		}
 	}
 	var targets []string
 	for name := range s.sb.Entries {
 		p := path.Join("/", filepath.ToSlash(name))
-		_, chosen := selected[p]
+		chosen := files[p]
 		for parent := path.Dir(p); !chosen && parent != "/"; parent = path.Dir(parent) {
-			chosen = selected[parent]
+			chosen = directories[parent]
 		}
 		if chosen {
 			targets = append(targets, name)
@@ -138,13 +147,13 @@ func (s *archiveShell) refreshAfterRemoval() {
 	// Deleting the last file also removes its inferred directory. Keep the
 	// shell usable by walking back to the nearest surviving logical ancestor.
 	for {
-		if n, err := s.resolve(s.cwd, true); err == nil && n.isDir() {
+		if n, err := s.resolveDirectory(s.cwd); err == nil && n.isDir() {
 			break
 		}
 		s.cwd = path.Dir(s.cwd)
 	}
 	if s.previous != "" {
-		if n, err := s.resolve(s.previous, true); err != nil || !n.isDir() {
+		if n, err := s.resolveDirectory(s.previous); err != nil || !n.isDir() {
 			s.previous = ""
 		}
 	}

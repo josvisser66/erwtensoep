@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -30,16 +28,11 @@ func (s *archiveShell) versions(args []string) error {
 	if err != nil {
 		return err
 	}
-	key := filepath.FromSlash(strings.TrimPrefix(n.path, "/"))
-	if n.entry != nil {
-		key = n.entry.GetPath()
+	if n.isDir() {
+		return fmt.Errorf("%s: is a directory (use the file name without a trailing slash to list file versions)", f.Arg(0))
 	}
-	// Read the full index, not the latest-only browsing tree. This also makes
-	// old file versions visible when descendants now make the path a directory.
-	saved := s.sb.Entries[key]
-	if len(saved) == 0 {
-		return fmt.Errorf("%s: is a directory with no saved file versions", f.Arg(0))
-	}
+	// Read the full history of the resolved file, not only the browsing version.
+	saved := s.sb.Entries[n.entry.GetPath()]
 	rows, err := sortedArchiveVersions(saved)
 	if err != nil {
 		return fmt.Errorf("%s: %w", f.Arg(0), err)

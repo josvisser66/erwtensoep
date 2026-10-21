@@ -174,7 +174,7 @@ func (s *archiveShell) completePath(prefix string, directoriesOnly, followLinks 
 	if lookup == "" {
 		lookup = "."
 	}
-	n, err := s.resolve(lookup, true)
+	n, err := s.resolveDirectory(lookup)
 	if err != nil || !n.isDir() {
 		return nil
 	}
@@ -193,7 +193,7 @@ func (s *archiveShell) completePath(prefix string, directoriesOnly, followLinks 
 			continue
 		}
 		isDir := child.isDir()
-		if followLinks {
+		if followLinks && !isDir && s.nodes[directoryKey(child.path)] == nil {
 			if resolved, err := s.resolve(parent+name, true); err == nil {
 				isDir = resolved.isDir()
 			}

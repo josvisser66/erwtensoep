@@ -12,6 +12,7 @@ them, remove paths, and check or repair the archive.
 
 - [Build and run](#build-and-run)
 - [Understand archive paths and versions](#understand-archive-paths-and-versions)
+- [Files and directories with the same name](#files-and-directories-with-the-same-name)
 - [Common tasks](#common-tasks)
 - [Configuration](#configuration)
 - [Subcommand reference](#subcommand-reference)
@@ -101,6 +102,115 @@ files. Archive-wide `stats`, `verify`,
 Keep an archive idle while checking or repairing it, and use one modifying
 process at a time. The archive does not have a lock coordinating separate
 merge, removal, repair, and CLI processes.
+
+## Files and directories with the same name
+
+**In the interactive CLI and in `restore`, `a` selects the file; `a/` selects
+only the directory and its contents.** A bare name falls back to a directory
+only when there is no file or symlink at that exact path. `cd a` is the exception:
+`cd` always requests a directory, so it enters `a/` even when the file exists.
+
+This situation is valid in an archive. One backup might contain a file named
+`a`, while another contains `a/child.txt`. Since merges retain older entries,
+both remain accessible. It can also happen when merging different source
+directories or tar archives into the same archive. The directory is inferred
+from `a/child.txt`; it is not another saved version of the file `a`.
+
+### How to select the object you want
+
+Suppose the archive contains `a` with two saved versions and `a/child.txt`.
+A CLI listing of their parent displays both, even without `ls -F`:
+
+```text
+a (2 versions)
+a/
+```
+
+| Interactive command | What it selects |
+| --- | --- |
+| `ls a` | The file `a`; asks which file version to display. |
+| `ls a/` | The directory's contents, such as `child.txt`. |
+| `ls -d a/` | The directory itself. |
+| `cat a` or `more a` | A saved version of the file `a`. |
+| `cat a/` or `more a/` | An error: the operand is a directory. |
+| `versions a` | All saved versions of the file `a`. |
+| `versions a/` | An error: directories have no saved file versions of their own. |
+| `du a` | The size of one selected version of the file `a`. |
+| `du a/` | The sum of selected file sizes below `a/`, excluding the file `a`. |
+| `cd a` or `cd a/` | Enter the directory `a/`. |
+| `rm a` | Remove selected versions of the file `a`; keep `a/child.txt`. |
+| `rm -r a` | Also selects only the file `a`; `-r` does not change name resolution. |
+| `rm -r a/` | Remove selected versions below `a/`; keep every version of the file `a`. |
+
+**The trailing slash selects the object before any version question is asked.**
+For example, `cat a/` never asks about versions of the file `a`, and
+`rm -r a/` never offers those versions for deletion. `--latest`,
+`--all-versions`, and `-f` do not change which object the name selects.
+
+These rules apply at every level: `parent/a` selects the file, `parent/a/`
+selects the directory, and `parent/a/child.txt` traverses the directory. Relative
+and absolute CLI paths follow the same rules. `.` and `..` refer to directories.
+Removing the last descendant makes the inferred directory disappear, while a
+same-named file can remain. Removing the last file version leaves a same-named
+directory accessible, and the bare name then falls back to that directory.
+
+Tab completion offers both `a` and `a/`; `cd` completion offers the directory.
+CLI globs also preserve the distinction: `ls a*` can expand to both `a` and
+`a/`, while `ls a*/` selects directories only. Consequently, `rm -r a*` can
+select both the file and the directory. Use explicit operands when you intend
+to select only one. Colliding directories carry `/` in listings and `du` output;
+`ls -F` marks all directories, including those without a naming collision.
+
+A saved symlink counts as a file entry for these rules. Commands that normally
+follow symlinks still follow the selected link. When a symlink `a` and an
+inferred directory `a/` coexist, `a/` chooses that inferred directory.
+`rm a` removes the symlink itself; `rm -r a/` removes the inferred directory's
+descendants. When no inferred directory exists at the link's name, `rm a/`
+rejects the trailing slash rather than deleting through the final symlink.
+
+### Restoring a collision
+
+Choose one object per destination:
+
+```sh
+# Restore the file as restored-file/a.
+erwtensoep -a "$HOME/archives/work" restore -o "$HOME/restored-file" a
+
+# Restore descendants such as restored-directory/a/child.txt.
+erwtensoep -a "$HOME/archives/work" restore -o "$HOME/restored-directory" a/
+```
+
+The same version chooser applies after resolving the requested object;
+`--latest` skips that chooser without changing the file/directory rule.
+An ordinary output filesystem cannot hold both a file `a` and a directory `a`
+at the same location. If the selection contains both, restore reports a
+`restore path conflict` **before asking for versions or creating, replacing,
+or deleting any output files**. This also applies to symlinks and to nested
+collisions found while selecting a larger directory.
+
+For example, these selections conflict when the named entries exist:
+
+```sh
+erwtensoep -a ARCHIVE restore -o OUTPUT a a/
+erwtensoep -a ARCHIVE restore -o OUTPUT parent/
+erwtensoep -a ARCHIVE restore -o OUTPUT 'parent/*' 'parent/a/*'
+```
+
+The second and third examples conflict if both `parent/a` and
+`parent/a/child.txt` are selected. A trailing slash excludes the file at the
+operand's own path; it does not discard conflicting files deeper in the tree.
+Narrow the selection, or restore the file and directory into separate output
+directories as shown above. Repeating the same file operand is harmless.
+`--latest` does not override a conflict. Do not restore both objects into the
+same destination in separate runs: restoring the file can replace an existing
+directory there. Top-level restore globs match whole archive paths; `*` does
+not cross `/`, and globs should be quoted in your host shell.
+
+These selection rules concern the interactive CLI and top-level `restore`.
+Top-level `erwtensoep rm` remains a pattern command: a bare name selects itself
+**and** descendants, followed by version selection and final confirmation.
+Use `erwtensoep ... cli` and its `rm a` when you want the exact file-only
+removal behavior described in the table.
 
 ## Common tasks
 
@@ -365,8 +475,10 @@ erwtensoep -a "$HOME/archives/work" restore -o "$HOME/restored-notes" 'documents
 
 Output retains archive paths: `documents/notes.txt` becomes
 `$HOME/restored-work/documents/notes.txt`. A directory name selects all its
-descendants. To restore the entire example archive, supply each top-level
-directory and file:
+descendants when no same-named file exists; append `/` to select the directory
+explicitly. See
+[files and directories with the same name](#files-and-directories-with-the-same-name).
+To restore the entire example archive, supply each top-level directory and file:
 
 ```sh
 erwtensoep -a "$HOME/archives/work" restore -o "$HOME/restored-all" documents photos README.txt
@@ -578,8 +690,11 @@ multiple versions exist. `--latest` uses the newest versions without asking.
 required. No matches is
 a successful operation that restores nothing.
 
-Plain names match themselves and descendants; a trailing `/` selects
-descendants only. Globs match full archive-relative paths and do not cross `/`.
+A plain name selects the exact file or symlink when it exists; otherwise it
+selects descendants. A trailing `/` selects descendants only. Globs match full
+archive-relative paths and do not cross `/`. Selecting both a file and any of
+its descendants fails before prompting or writing output. See
+[files and directories with the same name](#files-and-directories-with-the-same-name).
 Choices are collected before any files are written; Enter skips a file and `q`
 or unanswered EOF cancels the operation. There is no overwrite prompt or
 dry-run flag.
@@ -596,8 +711,10 @@ Only `y` or `yes`, case-insensitively, confirms. Declining returns an error;
 no matches or no selected versions prints a message and succeeds. At least one
 pattern is required.
 
-Matching follows the same rules as `restore`. Only the selected versions are
-removed. There are no `-r`, `-f`, `-i`, or `-v` options on this
+A plain pattern matches itself and descendants; a trailing `/` selects only
+descendants. Globs match full archive-relative paths without crossing `/`.
+Unlike `restore` and interactive `rm`, a bare name includes both a same-named
+file and directory descendants. Only the selected versions are removed. There are no `-r`, `-f`, `-i`, or `-v` options on this
 top-level command; those belong to interactive `rm`.
 
 ### `stats`
@@ -717,7 +834,10 @@ the selected shell's help for its installation instructions.
 
 Inside `cli`, `/` is the archive root; relative paths start at the current
 directory. `.` and `..` work as usual. Symlinks, including absolute targets,
-resolve within the archive. Symlink loops produce an error.
+resolve within the archive. Symlink loops produce an error. When a file and
+directory share a name, `a` selects the file and `a/` selects the directory;
+`cd a` enters the directory. See the detailed
+[collision rules and examples](#files-and-directories-with-the-same-name).
 
 Single/double quotes and backslash escapes protect spaces or literal glob
 characters. Unquoted `*`, `?`, and `[...]` expand against archive paths. Hidden
@@ -818,9 +938,9 @@ rows.
 Use `help versions` or `versions --help` inside the CLI to see usage and flags.
 
 A final symlink shows its own saved versions and each target; intermediate
-symlinks are resolved inside the archive. A directory with no saved file
-versions produces an error. If a path used to be a file and is now an inferred
-directory, its older file versions can still be listed. Exactly one operand
+symlinks are resolved inside the archive. `versions a` lists the file history
+even when a directory `a/` also exists. `versions a/` explicitly selects the
+directory and produces an error. Exactly one operand
 is required after glob expansion. This command only displays metadata; it does
 not change the archive or select a version for another command. File commands
 present their own numbered chooser when needed.
@@ -832,8 +952,8 @@ Choose one saved version per file when prompted, or use `--latest` to select the
 newest automatically. Enter skips a file and `q` cancels before any contents are
 printed. A versioned symlink is selected before following its saved target; a
 versioned target then gets its own choice. Repeated paths or aliases reuse the
-same choice within a command. Old file entries at paths that are now inferred
-directories remain readable by naming that path directly.
+same choice within a command. If a file and directory share the path, `cat a`
+reads the file and `cat a/` rejects the directory.
 
 | Options | Effect |
 | --- | --- |
@@ -909,7 +1029,8 @@ Single-version paths are removed immediately unless `-i` is specified.
 
 The last `-f` or `-i` wins, including in combined flags. Force does not suppress
 other errors. Root, `.` and `..` operands are refused. Final symlinks are
-removed themselves; a trailing slash on a final symlink is rejected. Intermediate
+removed themselves; a trailing slash on a final symlink is rejected unless it
+selects a separate inferred directory at that name. Intermediate
 symlinks are resolved inside the archive, and recursion does not traverse
 symlink targets. If removal empties the current inferred directory, the prompt
 moves to its nearest surviving ancestor.

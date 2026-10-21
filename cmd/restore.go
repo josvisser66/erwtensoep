@@ -17,7 +17,7 @@ func init() {
 var restoreCmd = &cobra.Command{
 	Use:   "restore [patterns...]",
 	Short: "Restore files and directories from the archive",
-	Long:  "Restore matching files and symlinks. When multiple versions are saved,\nchoose one from a numbered list. Enter skips a file; q cancels before writing.\nUse --latest to restore the newest versions without prompting.",
+	Long:  "Restore matching files and symlinks. When multiple versions are saved,\nchoose one from a numbered list. Enter skips a file; q cancels before writing.\nUse --latest to restore the newest versions without prompting.\n\nIf a file and directory share a name, a selects the file and a/ selects\nonly the directory contents. A plain name selects descendants only when no\nfile has that name. Conflicting selections fail before any output is written;\nnarrow broad patterns or restore files and directories into separate destinations.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if outputDir == "" {
 			return errors.New("output directory not specified")

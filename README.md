@@ -163,6 +163,12 @@ Use `versions FILE` to list every saved version of a file in the current directo
 version, for example `notes.txt (3 versions)`, including in long listings.
 The `rm` command can remove individual saved versions or all versions of a path.
 
+If a file and directory share a name, the CLI and `restore` treat `a` as the
+file and `a/` as the directory; `cd a` enters the directory. Listings and Tab
+completion show both. `rm -r a/` leaves the file `a` intact. Restore rejects
+selections containing both a file and its descendants before writing output.
+See the manual's [detailed rules and examples](docs/user-manual.md#files-and-directories-with-the-same-name).
+
 `cat`, `more`, `du`, and `ls FILE` display the numbered version list when a
 file has multiple versions and ask which one to use. Choose one number, press
 Enter to skip that file, or enter `q` to cancel. Versions are ordered by saved
