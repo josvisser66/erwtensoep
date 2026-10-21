@@ -105,8 +105,8 @@ merge, removal, repair, and CLI processes.
 
 ## Files and directories with the same name
 
-**In the interactive CLI and in `restore`, `a` selects the file; `a/` selects
-only the directory and its contents.** A bare name falls back to a directory
+**In the interactive CLI, top-level `rm`, and `restore`, `a` selects the file;
+`a/` selects only the directory and its contents.** A bare name falls back to a directory
 only when there is no file or symlink at that exact path. `cd a` is the exception:
 `cd` always requests a directory, so it enters `a/` even when the file exists.
 
@@ -165,8 +165,10 @@ A saved symlink counts as a file entry for these rules. Commands that normally
 follow symlinks still follow the selected link. When a symlink `a` and an
 inferred directory `a/` coexist, `a/` chooses that inferred directory.
 `rm a` removes the symlink itself; `rm -r a/` removes the inferred directory's
-descendants. When no inferred directory exists at the link's name, `rm a/`
-rejects the trailing slash rather than deleting through the final symlink.
+descendants. In the interactive CLI, when no inferred directory exists at the
+link's name, `rm a/` rejects the trailing slash rather than deleting through
+the final symlink. Top-level `rm a/` instead reports no matching entries in
+that case. Neither removal command follows the final symlink to delete its target.
 
 ### Restoring a collision
 
@@ -206,11 +208,41 @@ same destination in separate runs: restoring the file can replace an existing
 directory there. Top-level restore globs match whole archive paths; `*` does
 not cross `/`, and globs should be quoted in your host shell.
 
-These selection rules concern the interactive CLI and top-level `restore`.
-Top-level `erwtensoep rm` remains a pattern command: a bare name selects itself
-**and** descendants, followed by version selection and final confirmation.
-Use `erwtensoep ... cli` and its `rm a` when you want the exact file-only
-removal behavior described in the table.
+### Removing a collision with top-level `rm`
+
+Top-level `erwtensoep rm` follows the same file/directory selection rules:
+
+```sh
+# Select only versions of the file a; keep all entries below a/.
+erwtensoep -a ARCHIVE rm a
+
+# Select only versions below a/; keep every version of the file a.
+erwtensoep -a ARCHIVE rm a/
+
+# Explicitly select both the file and all descendants.
+erwtensoep -a ARCHIVE rm a a/
+```
+
+No `-r` flag is needed or accepted by top-level `rm`. Each command offers
+version selection for the selected files, prints a removal summary, and then
+asks `Proceed with removal? [y/N]:`. `--all-versions` skips the version chooser
+but still requires final confirmation and does not broaden the path selection.
+In particular, `rm --all-versions a` preserves all descendants while a file or
+symlink named `a` exists.
+
+A bare name selects descendants only if no file or symlink has that exact name.
+This means that after removing the last version of the file `a`, a later
+`rm a` selects the remaining directory contents. Repeating an operand within
+one command does not change its selection or prompt twice.
+
+Top-level globs match whole archive-relative paths, and `*` does not cross `/`.
+Quote them in your host shell. For example, `rm 'a*'` can select the file `a`
+but does not select `a/child.txt`; `rm 'a/*'` selects matching direct children.
+Use `a/` for all descendants, including hidden files and deeper paths.
+A larger directory operand includes all entries below it, including nested
+file/directory collisions. Unlike restore, removal allows a file and its
+descendants to be selected together. Symlink entries are selected as files;
+top-level pattern matching never follows their targets.
 
 ## Common tasks
 
@@ -546,7 +578,10 @@ erwtensoep -a "$HOME/archives/work" rm documents/obsolete.txt
 erwtensoep -a "$HOME/archives/work" rm 'documents/*.tmp'
 ```
 
-A plain directory name selects all its descendants without requiring `-r`.
+A bare name selects only the exact file or symlink when it exists, otherwise
+it selects directory descendants. Append `/` to select descendants explicitly
+and preserve any same-named file. Top-level `rm` does not require `-r`. See
+[removing a collision](#removing-a-collision-with-top-level-rm) for examples.
 The interactive shell has Unix-style options instead:
 
 ```text
@@ -711,11 +746,14 @@ Only `y` or `yes`, case-insensitively, confirms. Declining returns an error;
 no matches or no selected versions prints a message and succeeds. At least one
 pattern is required.
 
-A plain pattern matches itself and descendants; a trailing `/` selects only
-descendants. Globs match full archive-relative paths without crossing `/`.
-Unlike `restore` and interactive `rm`, a bare name includes both a same-named
-file and directory descendants. Only the selected versions are removed. There are no `-r`, `-f`, `-i`, or `-v` options on this
-top-level command; those belong to interactive `rm`.
+Matching uses the same path-selection rules as `restore`: a plain name selects
+the exact file or symlink if it exists, otherwise its descendants. A trailing
+`/` selects descendants only. Globs match full archive-relative paths without
+crossing `/`. Unlike restore, removal permits selecting both a file and its
+descendants together (for example, `rm a a/`). Only the selected versions are
+removed. There are no `-r`, `-f`, `-i`, or `-v` options on this top-level command;
+those belong to interactive `rm`. See
+[removing a collision](#removing-a-collision-with-top-level-rm).
 
 ### `stats`
 
@@ -843,7 +881,7 @@ Single/double quotes and backslash escapes protect spaces or literal glob
 characters. Unquoted `*`, `?`, and `[...]` expand against archive paths. Hidden
 names need an explicit leading dot. For example, `cat *.txt` expands a glob,
 while `cat '*.txt'` requests a file literally named `*.txt`. This differs from
-quoting a pattern passed through the host shell to top-level `ls` or `restore`.
+quoting a pattern passed through the host shell to top-level `ls`, `rm`, or `restore`.
 
 Short options can be combined. Use `--` before operands beginning with `-`.
 There are no pipes, redirections, variables, host commands, or command chaining;
@@ -1051,7 +1089,7 @@ moves to its nearest surviving ancestor.
 | Files appear under unexpected paths | Source roots are stripped during merge; multiple sources share one namespace. |
 | A tar source expands instead of being stored as a file | Explicit `.tar`, `.tar.gz`, and `.tgz` sources import their members and print a warning. Merge the containing directory to store the tar file itself. |
 | An updated file was skipped | Merge identifies versions from metadata. Check size and modification time. |
-| A glob matches too little | Top-level patterns match whole paths and `*` does not cross `/`; use a directory name for its subtree. |
+| A glob matches too little | Top-level patterns match whole paths and `*` does not cross `/`; use a trailing `/` to select a subtree with `rm` or `restore`. |
 | `ls -l` fails | Start `cli` for Unix-style listing flags; top-level `ls` has fixed output. |
 | `du` and `stats` differ | CLI `du` measures selected logical file versions; `stats` measures all versions and sharing/compression stages. |
 | Loading the superblock fails | Try `fsck -nv`, which can inspect a missing or damaged index independently. |

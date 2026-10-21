@@ -7,7 +7,9 @@ import (
 	"os"
 )
 
-// RemoveTargets returns archive paths that match the provided patterns.
+// RemoveTargets returns sorted, unique paths using the same selection rules as
+// RestoreTargets: exact files take precedence; a trailing slash selects only
+// descendants. Removal permits selecting a file and its descendants together.
 func (sb *Superblock) RemoveTargets(patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, errors.New("no remove patterns specified")

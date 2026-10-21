@@ -30,26 +30,7 @@ func (sb *Superblock) RestoreTargets(patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, errors.New("no restore patterns specified")
 	}
-	matched := make(map[string]bool)
-	for _, pattern := range patterns {
-		p := normalizePattern(pattern)
-		// Exact file operands take precedence over same-named directories.
-		// Slash-suffixed operands select descendants only; globs remain broad.
-		if !strings.ContainsAny(p, "*?[") && !strings.HasSuffix(p, "/") && len(sb.Entries[p]) > 0 {
-			matched[p] = true
-			continue
-		}
-		for name := range sb.Entries {
-			if matchesPattern(filepath.ToSlash(name), p) {
-				matched[name] = true
-			}
-		}
-	}
-	paths := make([]string, 0, len(matched))
-	for name := range matched {
-		paths = append(paths, name)
-	}
-	sort.Strings(paths)
+	paths := sb.matchingPaths(patterns)
 	return paths, validateRestorePaths(paths)
 }
 
@@ -70,16 +51,27 @@ func validateRestorePaths(paths []string) error {
 	return nil
 }
 
+// matchingPaths is shared by restore and removal. Bare file names select only
+// that entry; directories select descendants. Results are sorted and unique.
 func (sb *Superblock) matchingPaths(patterns []string) []string {
-	normalized := make([]string, 0, len(patterns))
-	for _, p := range patterns {
-		normalized = append(normalized, normalizePattern(p))
-	}
-	var paths []string
-	for name := range sb.Entries {
-		if matchesAnyPattern(filepath.ToSlash(name), normalized) {
-			paths = append(paths, name)
+	matched := make(map[string]bool)
+	for _, pattern := range patterns {
+		p := normalizePattern(pattern)
+		// Exact file operands take precedence over same-named directories.
+		// Slash-suffixed operands select descendants only; globs remain broad.
+		if !strings.ContainsAny(p, "*?[") && !strings.HasSuffix(p, "/") && len(sb.Entries[p]) > 0 {
+			matched[p] = true
+			continue
 		}
+		for name := range sb.Entries {
+			if matchesPattern(filepath.ToSlash(name), p) {
+				matched[name] = true
+			}
+		}
+	}
+	paths := make([]string, 0, len(matched))
+	for name := range matched {
+		paths = append(paths, name)
 	}
 	sort.Strings(paths)
 	return paths
@@ -170,15 +162,6 @@ func normalizePattern(pattern string) string {
 		p += "/"
 	}
 	return p
-}
-
-func matchesAnyPattern(path string, patterns []string) bool {
-	for _, pattern := range patterns {
-		if matchesPattern(path, pattern) {
-			return true
-		}
-	}
-	return false
 }
 
 func matchesPattern(path string, pattern string) bool {

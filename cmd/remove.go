@@ -19,7 +19,7 @@ func init() {
 var removeCmd = &cobra.Command{
 	Use:   "rm [patterns...]",
 	Short: "Remove files from the archive",
-	Long:  "Remove archived versions matching the given paths or patterns.\nChoose from a numbered list when a file has multiple saved versions.\nUse --all-versions to select them all. Confirm the selection before removal.",
+	Long:  "Remove archived versions matching the given paths or patterns.\nChoose from a numbered list when a file has multiple saved versions.\nUse --all-versions to select them all. Confirm the selection before removal.\n\nIf a file and directory share a name, a selects only the file and a/ selects\nonly directory contents. A bare name selects descendants when no file or symlink\nhas that name. Specify both a and a/ to remove both; no -r flag is needed.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			return errors.New("no remove patterns specified")

@@ -163,8 +163,8 @@ Use `versions FILE` to list every saved version of a file in the current directo
 version, for example `notes.txt (3 versions)`, including in long listings.
 The `rm` command can remove individual saved versions or all versions of a path.
 
-If a file and directory share a name, the CLI and `restore` treat `a` as the
-file and `a/` as the directory; `cd a` enters the directory. Listings and Tab
+If a file and directory share a name, the CLI, top-level `rm`, and `restore`
+treat `a` as the file and `a/` as the directory; `cd a` enters the directory. Listings and Tab
 completion show both. `rm -r a/` leaves the file `a` intact. Restore rejects
 selections containing both a file and its descendants before writing output.
 See the manual's [detailed rules and examples](docs/user-manual.md#files-and-directories-with-the-same-name).
@@ -259,7 +259,11 @@ paths are removed immediately unless `-i` is specified. With `-i`, selecting
 versions is itself confirmation; single-version paths and `--all-versions`
 removals get a yes/no prompt. The top-level `erwtensoep rm` uses the same version
 chooser, then asks for final confirmation of the selection; it also accepts
-`--all-versions`.
+`--all-versions`. Top-level `rm a` selects only the file when it exists;
+`rm a/` selects descendants while preserving that file, without needing `-r`.
+Use `rm a a/` to select both. If there is no exact file or symlink, a bare name
+selects directory contents. See the manual's
+[top-level removal examples](docs/user-manual.md#removing-a-collision-with-top-level-rm).
 
 Interactive `rm` accepts relative or
 absolute archive paths, quotes, globs, and `--` for names beginning with `-`.

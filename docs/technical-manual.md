@@ -538,8 +538,10 @@ history is preserved rather than overwritten. Lock/save failures retain pending
 commands for a later retry. Piped sessions do not load or save history.
 
 [`RestoreTargets`](../internal/fs/restore.go) expands restore patterns to sorted
-index paths. Exact non-glob file operands take precedence over descendants;
-trailing slashes select descendants only. Other patterns use the shared matcher.
+index paths through `matchingPaths`, shared with `RemoveTargets`. Exact
+non-glob file operands take precedence over descendants; trailing slashes
+select descendants only. Bare names without exact entries select descendants.
+Other patterns use the shared matcher; overlapping operands are deduplicated.
 Unlike `RemoveTargets`, restore rejects selections containing an entry and any
 of its descendants before version selection. `validateRestorePaths` checks
 every selected path's ancestors against a set, including symlink ancestors;
@@ -566,8 +568,12 @@ resolves and expands archive paths itself. It keeps separate sets of exact file
 operands and recursive directory operands: `rm a` selects the file and
 `rm -r a/` selects strict descendants, preserving all versions of `a`. Both
 objects can also be selected together in either argument order. Top-level
-removal retains its pattern semantics (bare names include themselves and
-descendants). Both command interfaces build an
+removal shares restore's `matchingPaths` selection: a bare file or symlink name
+selects only that entry, a trailing slash selects strict descendants, and a bare
+name falls back to descendants only when no exact entry exists. Globs still
+match whole paths without crossing `/`. Removal intentionally omits restore's
+ancestor-conflict validation, so `rm a a/` can remove both. `Remove` inherits
+these rules through `RemoveTargets`. Both command interfaces build an
 exact path-to-version-ID selection and call `RemoveVersions`, so a quoted
 literal `*` or `[` in a filename is not interpreted a second time.
 
@@ -793,7 +799,7 @@ go test ./internal/storage ./internal/fs ./cmd -run S3
 | `internal/fs/backup_test.go`, `restore_test.go`, `rebuild_test.go` | Versions, sharing, restoration patterns, independent index reconstruction. |
 | `internal/fs/merge_tar_test.go`, `cmd/merge_tar_test.go` | Tar/gzip formats, metadata, hard links, exclusion order, size limits, dry runs, damaged/unsafe sources, fixed block boundaries, warnings, mixed sources, and local/S3 round trips. |
 | `internal/fs/read_test.go` | Streaming across blocks, early close, missing/corrupt content. |
-| `internal/fs/remove*_test.go`, `cmd/remove_versions_test.go` | Partial/all-version removal, shared data retention, exact paths, persistence, cancellation, dry run, failed index writes and prompt I/O. |
+| `internal/fs/remove*_test.go`, `cmd/remove_versions_test.go`, `cmd/remove_collision_test.go` | Partial/all-version removal, file/directory collisions, shared data retention, exact paths, persistence, cancellation, dry run, failed index writes and prompt I/O. |
 | `internal/fs/stats_test.go`, `cmd/stats_test.go` | Sharing calculations, stored sizes, compression expansion, report formatting. |
 | `internal/fs/fsck_test.go`, `cmd/fsck_test.go` | Corruption cascades, orphan recovery, stale plans, index discrepancies, I/O failures, confirmation, progress totals/percentages, clean rechecks. |
 | `internal/storage/*_test.go` | Backend contracts, fan-out layout, size fallback, pruning, no-follow inventory. |
